@@ -38,8 +38,8 @@ program LispKit(Input, Output);
 
 const TopCell = 300000;     (*    size of heap storage    *)
       FileRecordLimit = 255;
-      OutFileWidth = 200;
-      OutTermWidth = 80;
+      OutFileWidth = 120;
+      OutTermWidth = 78;
 
 (*--------------- Machine dependent file management ---------------*)
 
@@ -436,9 +436,14 @@ end {GetToken};
 
 procedure PutSymbol(Symbol : longint);
 var p : longint;
+    last : longint;
 begin p := Head[Symbol];
-      while p <> NILL do begin PutChar(chr(Head[Head[p]])); p := Tail[p] end;
-      PutChar(' ')
+      while p <> NILL do
+         begin last := Head[Head[p]];
+               PutChar(chr(last));
+               p := Tail[p]
+         end;
+      if last <> 13 then PutChar(' ')
 end {PutSymbol};
 
 procedure PutNumber(Number : longint);
