@@ -437,13 +437,16 @@ end {GetToken};
 procedure PutSymbol(Symbol : longint);
 var p : longint;
     last : longint;
+    n : integer; 
 begin p := Head[Symbol];
+      n := 0;
       while p <> NILL do
          begin last := Head[Head[p]];
+               n := n + 1;
                PutChar(chr(last));
                p := Tail[p]
          end;
-      if last <> 13 then PutChar(' ')
+      if (n <> 1) or (last <> 13) then PutChar(' ')
 end {PutSymbol};
 
 procedure PutNumber(Number : longint);
