@@ -1,0 +1,325 @@
+;       file SECD.VOLS.TEXT
+
+unit_search     ; searches the table of fixed units for the file name
+                ; described in A2.
+                ; if found, returns with D0 equal to zero and an entry in A0.
+
+        SAVE    D1-D2/A1
+        MOVEQ   #-1., D0                ; default return code
+        LEA     unit_table, A0          ; index into unit table
+        LEA     unit_top, A1            ; bound on unit table search
+    $10 ADDA.L  #unit_stride, A0
+        CMPA.L  A0, A1
+        BEQ.S   $30                     ; no entry in unit table
+        MOVE_BW fn_first_name(A2), D1   ; length of first component of name
+    $20 MOVE.B  fn_first_name(A2, D1.W), D2 ; same length, compare characters
+        CMP.B   unit_name(A0, D1.W), D2
+        DBNE    D1, $20
+        BNE.S   $10
+        MOVEQ   #0., D0                 ; set return code
+    $30 RESTORE D1-D2/A1
+        RTS                             ; return from unit_search
+
+find_directory  ; Takes directory buffer in A0 and a file name in A2, and
+                ; searches for the first volume which matches the description
+                ; of the innermost volume of A2.
+                ; On exit, if D0 is zero, the directory buffer contains the
+                ; directory of the innermost volume of the file name,
+                ; D1 contains the channel number, and D2 the block
+                ; offset of this volume, and D3 the first block following the
+                ; volume.
+                ; In case of failure to find the innermost volume, or any
+                ; read failure, D0 is left with a non-zero value.
+
+        SAVE    D4-D6/A1/A4-A6
+        ALLOC   <1.+tid_len+5.>, A4     ; room for a file name with extension
+        LEA     $100, A6                ; table of disk volumes
+        MOVE.W  (A6)+, D4               ; one less than length
+    $00 MOVE.W  (A6)+, D1               ; channel number for drive
+        MOVE.L  (A6)+, D2               ; offset block on volume
+;       MOVE.L  0FFFFFFFFH, D3          ; limit of volume
+        MOVEQ   #-1., D3
+        MOVE.W  (A2), D5                ; number of components in file name
+        SUBQ.W  #1., D5                 ; at least 2 if there is a directory
+        BLE.S   $50
+        LEA     fn_first_name(A2), A1   ; first component of name
+    $10 BSR     read_directory
+        TST.W   D0                      ; if i/o error, ignore this drive
+        BNE.S   $50
+        MOVE_BW 0.(A1), D6              ; length of first component of name
+    $20 MOVE.B  0.(A1, D6.W), D0        ; character from file name
+        CMP.B   d_vol_id(A0, D6.W), D0  ; volume name of directory
+        DBNE    D6, $20
+        BNE.S   $50                     ; error, wrong volume
+        CLR.L   D3
+        MOVE.W  d_eov_block(A0), D3     ; get end of volume block
+        ADD.L   D2, D3                  ; and offset with volume offset
+        MOVEQ   #0., D0                 ; anticipate successful completion
+        SUBQ.W  #1., D5                 ; if only one more component in name
+        BEQ.S   $59                     ; then finished successfully
+        BSR.S   $80                     ; get next component in buffer
+                                        ; and concatenate with ".SVOL"
+        BSR     find_perm_file          ; search directory, get heading in A5
+        TST.B   D0
+        BMI.S   $50                     ; error, no entry
+        CLR.L   D3
+        MOVE.W  d_end_block(A5), D3     ; first relative block not to be read
+        ADD.L   D2, D3                  ; offset block by volume offset
+        CLR.L   D6
+        MOVE.W  d_first_block(A5), D6   ; first block of file containing svol
+        ADD.L   D6, D2
+        CMP.B   #d_svol_type, D0        ; check for subsidiary volume file
+        BEQ.S   $10                     ; and go round for the next component
+    $50 DBRA    D4, $00                 ; if one disk fails, try the next
+        MOVEQ   #io_res_no_vol, D0      ; if no more disks, then unsuccessful
+    $59 RELEASE <1.+tid_len+5.>
+        RESTORE D4-D6/A1/A4-A6
+        RTS                             ; return from find_directory
+
+    $80 ; subroutine for find_directory
+        ;       copy next component of name to buffer at A4 and
+        ;       concatenate with the suffix, ".SVOL"
+        ; corrupts D6
+
+        ADDA.L  #fn_stride, A1          ; take next component of file name
+        MOVE_BW (A1), D6                ; length of component
+        MOVE.B  #".", 1.(A4, D6.W)      ; put suffix ".SVOL" in buffer
+        MOVE.B  #"S", 2.(A4, D6.W)
+        MOVE.B  #"V", 3.(A4, D6.W)
+        MOVE.B  #"O", 4.(A4, D6.W)
+        MOVE.B  #"L", 5.(A4, D6.W)
+    $30 MOVE.B  0.(A1, D6.W), 0.(A4, D6.W) ; copy file name into buffer
+        DBRA    D6, $30
+        ADDQ.B  #5., (A4)               ; and adjust length
+        RTS                             ; return from $80 in find_directory
+
+  $100                                  ; disk description table
+       .WORD 4.                         ; one less than the number of entries
+                                        ; each entry cosists of
+                                        ;       word : channel number
+                                        ;  long word : volume offset block
+       .WORD  9., 0., 0.
+       .WORD 10., 0., 0.
+       .WORD 12., 0., 0.
+       .WORD  5., 0., 0.
+       .WORD  4., 0., 0.
+
+find_new_file   ; Called with a directory buffer in A0, and a string in A4,
+                ; scans the directory for room to allocate a new file, and
+                ; introduces a new temporary file with that name.
+                ; On return, if D0 is non zero, then there is no room for
+                ; an entry, otherwise D0 is zero and A5 points at the
+                ; entry in the directory.
+
+        SAVE    D1-D2/A1
+        MOVE.W  d_num_files(A0), D0     ; number of files in the directory
+        CMPI.W  #d_max_files, D0
+        BEQ     $90
+        MOVEA.L A0, A1                  ; pointer to 0th file heading
+        MOVEQ   #0., D1                 ; largest gap found so far
+    $10 ADDA.L  #d_stride, A1           ; move on to next file heading
+        SUBQ.W  #1., D0
+        BMI.S   $20                     ; if no more files, finish scan
+        MOVE.W  d_first_block(A1), D2   ; length of preceding gap
+        SUB.W   <d_end_block-d_stride>(A1), D2 ; first unused block
+        CMP.W   D1, D2                  ; if larger than previous largest
+        BLS.S   $10
+        MOVE.W  D2, D1                  ; then set this to be largest
+        MOVEA.L A1, A5                  ; and point A5 at it
+        BRA.S   $10
+    $20 MOVE.W  d_eov_block(A0), D2     ; check for any room at end of volume
+        SUB.W   <d_end_block-d_stride>(A1), D2
+        CMP.W   D1, D2
+        BLS.S   $30
+        MOVE.W  D2, D1
+        MOVEA.L A1, A5
+    $30 TST.W   D1                      ; if no room in largest gap
+        BEQ.S   $90                     ; then error, no room on disk
+    $40 CMPA.L  A5, A1                  ; else copy existing entries up
+        BEQ.S   $50
+        MOVEQ   #<d_stride-1.>, D0
+    $45 MOVE.B  <-d_stride>(A1, D0.W), 0.(A1, D0.W) ; copy one entry
+        DBRA    D0, $45
+        SUBA.L  #d_stride, A1           ; and repeat until next to gap
+        BRA.S   $40
+    $50 ADDQ.W  #1., d_num_files(A0)
+        MOVE.W  <d_end_block-d_stride>(A5), D2
+        MOVE.W  D2, d_first_block(A5)
+        ADD.W   D2, D1
+        MOVE.W  D1, d_end_block(A5)
+        MOVE.B  #d_data_type, d_file_type(A5)
+        MOVE_BW (A4), D1                ; length of file name
+    $55 MOVE.B  0.(A4, D1.W), d_file_id(A5, D1.W) ; set name of entry
+        DBRA    D1, $55
+        MOVE.W  #never, d_date(A5)      ; mark entry as temporary
+        MOVEQ   #0., D0
+    $90 RESTORE D1-D2/A1
+        RTS                             ; return from find_new_file
+
+find_perm_file  ; Called with a directory buffer in A0, and a string in A4,
+                ; scans the directory for a permanent file with that name.
+                ; On return, if D0 is -1, then there is no such
+                ; entry, otherwise D0 low byte is the type of the entry,
+                ; and A5 points at the entry in the directory.
+
+        SAVE    D1-D2
+        MOVE.W  d_num_files(A0), D0     ; number of files in the directory
+        MOVEA.L A0, A5                  ; pointer to 0th file heading
+    $10 SUBQ.W  #1., D0
+        BMI.S   $90                     ; error, no file
+        ADDA.L  #d_stride, A5           ; move on to next file heading
+        CMPI.W  #never, d_date(A5)      ; check that entry is permanent
+        BEQ.S   $10
+        MOVE_BW 0.(A4), D1              ; length of file name
+    $20 MOVE.B  0.(A4, D1.W), D2
+        CMP.B   d_file_id(A5, D1.W), D2 ; check entry has right name
+        DBNE    D1, $20
+        BNE.S   $10
+        MOVE.B  d_file_type(A5), D0     ; found entry, get file type
+        ANDI.B  #d_type_mask, D0
+    $90 RESTORE D1-D2
+        RTS                             ; return from find_perm_file
+
+try_open_read   ; Tries to find the directory and the entry in that directory
+                ; corresponding to the file name in A2. If successful, returns
+                ; with D0 being zero, and having set the fields of the input
+                ; buffer in A1 to record the channel number and the positions
+                ; of the first and last blocks of the file
+
+        SAVE    D1-D3/A0/A4-A5
+        ALLOC   d_length, A0            ; get directory buffer in A0
+        BSR     find_directory          ; search for the innermost directory
+        TST.L   D0
+        BNE.S   $90                     ; if non zero, cannot find volume
+        MOVE.W  (A2), D0                ; number of components in file name
+        SUBQ.W  #2., D0                 ; at least 2
+        LEA     fn_first_name(A2), A4   ; first component of name
+    $10 ADDA.L  #fn_stride, A4          ; next component
+        DBRA    D0, $10                 ; repeat until A4 is last component
+        BSR     find_perm_file          ; scan for file, return heading in A5
+        TST.B   D0                      ; and type in D0
+        BPL.S   $20                     ; if negative, cannot find heading
+        MOVEQ   #io_res_no_file, D0
+        BRA.S   $90
+    $20 MOVE.B  D1, in_channel(A1)      ; select channel
+        CLR.L   D1
+        MOVE.W  d_first_block(A5), D1   ; first block of file
+        ADD.L   D2, D1                  ; offset block by volume offset
+        CMP.B   #d_text_type, D0        ; test for text file
+        BNE.S   $50
+        ADDQ.L  #2., D1                 ; skip two blocks
+    $50 MOVE.L  D1, in_next_block(A1)
+        CLR.L   D3
+        MOVE.W  d_end_block(A5), D3     ; first block not to be read
+        ADD.L   D2, D3                  ; offset block by volume offset
+        MOVE.L  D3, in_end_block(A1)
+        MOVEQ   #0., D0                 ; set code for successful return
+    $90 RELEASE d_length                ; discard directory buffer
+        RESTORE D1-D3/A0/A4-A5
+        RTS                             ; return from try_open_read
+
+try_open_write  ; Tries to find the directory corresponding to the file name
+                ; in A2. If successful, checks that there is room in the
+                ; directory for another file, and room on the volume for
+                ; the body of the file. Modifies the directory to include a
+                ; temporary file heading for the largest free space, rewrites
+                ; the directory to its proper volume and, if successful,
+                ; returns with D0 being zero, having set the fields of the
+                ; output buffer in A1 which record the channel number of the
+                ; volume, and its block offset on that volume, and the first
+                ; and last blocks of the newly allocated space.
+
+        SAVE    D1-D3/A0/A4-A5
+        ALLOC   d_length, A0            ; get directory buffer in A0
+        BSR     find_directory          ; search for the innermost directory
+        TST.L   D0
+        BNE.S   $90                     ; if non zero, cannot find volume
+        MOVE.W  (A2), D0                ; number of components in file name
+        SUBQ.W  #2., D0                 ; at least 2
+        LEA     fn_first_name(A2), A4   ; first component of name
+    $10 ADDA.L  #fn_stride, A4          ; next component
+        DBRA    D0, $10                 ; repeat until A4 is last component
+        BSR     find_new_file           ; scan for gap, return heading in A5
+        TST.B   D0
+        BPL.S   $20                     ; if negative, cannot find heading
+        MOVEQ   #io_res_no_room, D0
+        BRA.S   $90
+    $20 MOVE.B  D1, out_channel(A1)     ; select channel
+        MOVE.L  D2, out_vol_offset(A1)  ; first block of volume
+        CLR.L   D0
+        MOVE.W  d_first_block(A5), D0   ; first block of gap
+        ADD.L   D2, D0                  ; offset block by volume offset
+        MOVE.L  D0, out_next_block(A1)
+        CLR.L   D0
+        MOVE.W  d_end_block(A5), D0     ; first not to be written
+        ADD.L   D2, D0                  ; offset block by volume offset
+        MOVE.L  D0, out_end_block(A1)
+        BSR     write_directory         ; sets return code in D0
+    $90 RELEASE d_length                ; discard directory buffer
+        RESTORE D1-D3/A0/A4-A5
+        RTS                             ; return from try_open_write
+
+try_close_write ; closes the currently open disk file in the buffer pointed
+                ; at by A1, and returns D0 either zero, if successful, or
+                ; an error code, if not.
+
+        SAVE    D1-D4/A0/A2/A4-A5
+        ALLOC   d_length, A0            ; allocate a directory buffer in A0
+        MOVE_BW out_channel(A1), D1     ; read the directory of the volume
+        MOVE.L  out_vol_offset(A1), D2
+        BSR     read_directory
+        TST.W   D0
+        BNE     $90
+        MOVE.L  out_next_block(A1), D3  ; get relative block number of next
+        SUB.L   D2, D3                  ; block to be written to file
+        SWAP    D3                      ; check that it will fit into 16 bits
+        TST.W   D3
+        BNE.S   $12
+        SWAP    D3
+        MOVE.L  out_end_block(A1), D4   ; get relative block number of block
+        SUB.L   D2, D4                  ; first following the allocated area
+        SWAP    D4
+        TST.W   D4
+        BNE.S   $12
+        SWAP    D4
+        MOVE.W  d_num_files(A0), D0     ; number of files in the directory
+        MOVEA.L A0, A2                  ; pointer to 0th file heading
+    $10 ADDA.L  #d_stride, A2           ; move on to next file heading
+        SUBQ.W  #1., D0
+        BPL.S   $15                     ; if no more files, finish scan
+    $12 MOVEQ   #io_res_lost_file, D0
+        BRA     $90
+    $15 CMP.W   d_end_block(A2), D4     ; scan for heading which ends where
+        BNE.S   $10                     ; the allocated area finishes
+        LEA     d_file_id(A2), A4       ; get name of temporary file
+        BSR     find_perm_file          ; get heading of permanent file
+        TST.B   D0                      ; with same name in A5
+        BMI.S   $60                     ; if none, then done
+        SUBQ.W  #1., d_num_files(A0)    ; discard previous permanent file
+        MOVE.W  d_num_files(A0), D0     ; number of files in the directory
+        MOVEA.L A0, A4                  ; pointer to 0th file heading
+    $20 ADDA.L  #d_stride, A4           ; move on to next file heading
+        CMPA.L  A4, A5                  ; and decrement D0 until at the
+        DBEQ    D0, $20                 ; heading to be removed
+    $30 SUBQ.W  #1., D0                 ; D0 is count of headings above
+        BMI.S   $50                     ; the unwanted one, if none, done
+        MOVEQ   #<d_stride-1.>, D4      ; copy a file heading down over
+    $40 MOVE.B  d_stride(A4, D4.W), 0.(A4, D4.W) ; the unwanted one
+        DBRA    D4, $40
+        ADDA.L  #d_stride, A4           ; and move on to the next heading
+        BRA.S   $30
+    $50 CMPA.L  A2, A5                  ; if the temporary heading is
+        BHI.S   $60                     ; after the permanent one
+        SUBA.L  #d_stride, A2           ; then the permanent one has moved
+    $60 MOVE.W  D3, d_end_block(A2)     ; mark actual end of file
+        MOVE.W  out_length(A1), d_num_bytes(A2)
+        MOVE.W  out_date_stamp(A1), d_date(A2) ; mark file as permanent
+        CLR.L   D3
+        MOVE.W  d_eov_block(A0), D3     ; get the upper limit on the volume
+        ADD.L   D2, D3                  ; to check that the directory will go
+        BSR     write_directory         ; and try to write back
+    $90 RELEASE d_length                ; discard directory buffer
+        RESTORE D1-D4/A0/A2/A4-A5
+        RTS                             ; return from try_close_write
+
+;       end of file SECD.VOLS.TEXT

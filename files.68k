@@ -1,0 +1,208 @@
+;       file SECD.FILES.TEXT
+
+read_file_name  ; reads from the console and cleans up a file name
+                ; Returns the result in the file name buffer in A2.
+                ; If valid, returns with a non-empty file name, by
+                ; substitution of "CONSOLE:" for the empty input line.
+
+        SAVE    D0-D2/A0-A1/A4
+        ALLOC   <in_extra+100.>, A1     ; allocate an input buffer
+        MOVE.W  #100., in_length(A1)
+        MOVEQ   #term_in_channel, D0
+        BSR     readln_serial
+        RELEASE in_extra                ; release the buffer control block
+        MOVEQ   #0., D1                 ; reader
+        MOVEQ   #0., D2                 ; writer
+        MOVE.W  in_writer(A1), D0
+        SUBQ.W  #1., D0                 ; length-1 of the input line
+        BRA.S   $05
+    $00 ADDQ.W  #1., D1                 ; read next character
+        CMPI.B  #" ", in_data(A1, D1.W)
+        BEQ.S   $05                     ; if space, then ignore
+        BCS     $90                     ; if control character then error
+        CMPI.B  #DEL, in_data(A1, D1.W) ; if character too big
+        BCC     $90                     ; then error
+        ADDQ.W  #1., D2                 ; increment writer
+        MOVE.B  in_data(A1, D1.W), in_data(A1, D2.W) ; copy character
+        CMPI.B  #"a", in_data(A1, D2.W)
+        BCS.S   $05
+        CMPI.B  #"z", in_data(A1, D2.W)
+        BHI.S   $05
+        EORI.B  #<"a"^"A">, in_data(A1, D2.W) ; swap case
+    $05 DBRA    D0, $00
+
+        MOVEQ   #0., D1                 ; reader at beginning of input buffer
+        CLR.W   (A2)                    ; set no components in file name
+        LEA     fn_first_name(A2), A0   ; A0 is location for next component
+        TST.W   D2                      ; test writer
+        BNE.S   $20
+        LEA     $100, A4                ; empty input string, set to CONSOLE:
+        BRA.S   $40
+    $20 CMPI.B  #"*", <in_data+1.>(A1)  ; is first character a "*"
+        BNE.S   $30
+        ADDQ.W  #1., D1                 ; increment reader, having read "*"
+        LEA     system_id, A4           ; set system volume
+        BRA.S   $40
+    $30 MOVE.W  D2, D0
+    $35 CMPI.B  #":", in_data(A1, D0.W) ; if there are no ":" in the file name
+        DBEQ    D0, $35                 ; then prefix it with the default vol
+        BNE.S   $39
+        CMPI.B  #":", <in_data+1.>(A1)  ; is first character a ":"
+        BNE.S   $60
+    $39 LEA     prefix_id, A4           ; if so, set default volume name
+
+    $40 MOVE_BW (A4), D0                ; copy standard volume name
+    $45 MOVE.B  0.(A4, D0.W), 0.(A0, D0.W)
+        DBRA    D0, $45
+        CMP.W   D1, D2                  ; is there a next character?
+        BEQ.S   $50
+        CMPI.B  #":", <in_data+1.>(A1, D1.W) ; is it a ":"
+        BNE.S   $50
+        ADDQ.W  #1., D1                 ; if so, then read it
+
+    $50 ADDQ.W  #1., (A2)               ; add one component to result
+        ADDA.L  #fn_stride, A0
+        CMP.W   D1, D2                  ; if at end of buffer, then done
+        BEQ.S   $99
+    $60 CMPI.W  #fn_max_names, (A2)     ; if about to read too many components
+        BEQ.S   $90                     ; then signal error
+        MOVEQ   #0., D0                 ; D0 is length of this component
+    $65 ADDQ.W  #1., D1                 ; read next character
+        CMPI.B  #":", in_data(A1, D1.W) ; if it is a ":"
+        BEQ.S   $67                     ; then end this component
+        CMPI.W  #tid_len, D0            ; if the component is too long
+        BEQ.S   $90                     ; then signal error
+        ADDQ.W  #1., D0                 ; else add character to component
+        MOVE.B  in_data(A1, D1.W), 0.(A0, D0.W)
+        CMP.W   D1, D2                  ; continue until end of buffer
+        BNE.S   $65
+    $67 MOVE.B  D0, (A0)                ; found a component, set its length
+        BRA.S   $50
+
+    $90 CLR.W   (A2)                    ; set error by returning no components
+    $99 RELEASE 100.                    ; release the input buffer
+        RESTORE D0-D2/A0-A1/A4
+        RTS                             ; return from read_file_name
+
+  $100  STRING  7., "CONSOLE"
+       .ALIGN   2.
+
+open_read_file  ; attempts to open an input file, using the file name in A2,
+                ; in the extra fields of buffer A1, and returns zero in D0 if
+                ; successful, or a non-zero value if it fails
+
+        SAVE    A0
+        TST.W   (A2)                    ; a file name with no components
+        BNE.S   $10                     ; indicates an invalid name
+        MOVEQ   #io_res_fn_inv, D0
+        BRA     $90
+    $10 BSR     unit_search             ; get unit table entry in A0
+        TST.L   D0
+        BNE.S   $30                     ; if not found, then try disks
+        TST.B   unit_in_chan(A0)        ; found, but test ok for input
+        BNE.S   $20
+        MOVEQ   #io_res_in_inv, D0
+        BRA.S   $90
+    $20 MOVE.B  unit_in_chan(A0), in_channel(A1) ; ok for input, assume serial
+        LEA     get_serial, A0          ; set routine for reading buffers
+        MOVE.L  A0, in_get_buffer(A1)
+        BRA.S   $90                     ; D0 is already zero, for ok result
+    $30 BSR     try_open_read           ; try disks
+        TST.L   D0
+        BNE.S   $90
+        LEA     get_blocked, A0         ; set routine for reading buffers
+        MOVE.L  A0, in_get_buffer(A1)   ; D0 is already zero, for ok result
+    $90 RESTORE A0
+        RTS                             ; return from open_read_file
+
+open_write_file ; attempts to open an output file, using the file name in A2,
+                ; in the extra fields of buffer A1, and returns zero in D0 if
+                ; successful, or a non-zero value if it fails
+
+        SAVE    A0
+        TST.W   (A2)                    ; a file name with no components
+        BNE.S   $10                     ; indicates an invalid name
+        MOVEQ   #io_res_fn_inv, D0
+        BRA     $90
+    $10 BSR     unit_search             ; get unit table entry in A0
+        TST.L   D0
+        BNE.S   $30                     ; if not found, then try disks
+        TST.B   unit_out_chan(A0)       ; found, but test ok for output
+        BNE.S   $20
+        MOVEQ   #io_res_out_inv, D0
+        BRA.S   $90
+    $20 MOVE.B  unit_out_chan(A0), out_channel(A1) ; ok for serial output
+        LEA     put_serial, A0          ; set out_put_buffer routine
+        MOVE.L  A0, out_put_buffer(A1)
+        BRA.S   $90
+    $30 BSR     try_open_write          ; try disks
+        TST.L   D0
+        BNE.S   $90
+        LEA     put_blocked, A0         ; set out_put_buffer routine
+        MOVE.L  A0, out_put_buffer(A1)
+    $90 RESTORE A0
+        RTS                             ; return from open_write_file
+
+get_new_file    ; routine called as an in_get_buffer routine
+                ; opens a new input file when a block of input is requested
+                ; the buffer is addressed by A1
+
+        SAVE    D0/A2
+        MOVE.W  #1., in_writer(A1)      ; set writer = 1
+        MOVE.B  #" ", <in_data+1.>(A1)  ; put space into buffer
+        out_line    0.
+        out_string 23., "Take input from where? "
+        ALLOC   fn_length, A2           ; allocate a file name buffer in A2
+        BSR     read_file_name
+        BSR     open_read_file
+        TST.L   D0                      ; test result of operation
+        BEQ.S   $90
+        out_io_res 25., " while opening input file"
+    $90 RELEASE fn_length               ; release file name buffer
+        RESTORE D0/A2
+        RTS                             ; return from get_new_file
+
+get_put_new_file; routine called as an in_get_buffer routine, as a result
+                ; of a ^Y trap on serial input, which cause a call of
+                ; put_new_file The input buffer is currently addressed by
+                ; the A1 register
+
+        SAVE    A0-A1
+        MOVE.W  #1., in_writer(A1)      ; set writer = 1
+        MOVE.B  #" ", <in_data+1.>(A1)  ; put space into buffer
+        LEA     get_serial, A0          ; restore serial input routine
+        MOVE.L  A0, in_get_buffer(A1)
+        LEA     out_buffer, A1
+        BSR     close_output
+        MOVEQ   #pb_full_buffer, D0
+        BSR.S   put_new_file
+        RESTORE A0-A1
+        RTS                             ; return from get_put_new_buffer
+
+put_new_file    ; routine called from the ^Y trap in serial input
+                ; and as an out_put_buffer routine
+                ; expects its buffer in A1
+                ; behaviour depends on the pb_ parameter in D1
+                ;
+                ;  pb_full_buffer       opens a new output file
+                ;  pb_close_file        call is ignored
+
+
+        CMP.L   #pb_close_file, D0      ; ignore pb_close_file
+        BEQ.S   $99                     ; since there is no open file
+        SAVE    D0-D1/A1-A2
+        out_string 22., "Send output to where? "
+        ALLOC   fn_length, A2           ; allocate a file name buffer in A2
+        BSR     read_file_name
+        BSR     open_write_file         ; try to open file in A1 for writing
+        TST.L   D0                      ; test result of operation
+        BEQ.S   $90
+        out_io_res 26., " while opening output file"
+    $90 RELEASE fn_length               ; release file name buffer
+        RESTORE D0-D1/A1-A2
+        TST.W   out_writer(A1)          ; if nothing to output, then done
+        BEQ.S   $99                     ; (must have been called by ^Y trap)
+        PUSH_L  out_put_buffer(A1)      ; else continue, using new routine
+    $99 RTS                             ; return from put_new_file
+
+;       end of file SECD.FILES.TEXT

@@ -1,0 +1,225 @@
+;      file SECD.SRIAL.TEXT
+
+readln_serial   ; Reads a line of input from serial channel D0 into the
+                ; buffer pointed at by A1. Always reads at least one character
+                ; if successful (ie D0 zero), otherwise, returns an io_result
+                ; in D0 low word
+
+        SAVE    D1-D2/A0
+        ALLOC   io_length, A0           ; allocate an io block in A0
+        MOVE.W  D0, io_chan(A0)         ; set up serial input channel
+        CLR.W   io_control(A0)          ; control word: synchronous transfer
+rln_new_line
+        MOVEQ   #1., D1                 ; writer := 1
+rln_next_char
+        MOVE.W  D1, in_writer(A1)       ; set writer
+        CMP.W   in_length(A1), D1       ; if buffer already full
+        BHI     readln_delete           ; then fake a backspace
+        MOVE.L  #1., io_num_bytes(A0)   ; set up one byte transfer
+        PEA     in_data(A1, D1.W)       ; address of buffer (indexed from 1)
+        POP_L   io_buffer(A0)
+        BIOS    #read_data              ; read a character
+        MOVE.W  io_result(A0), D0
+        BNE.S   rln_exit                ; if failed to read, exit
+rln_read_char
+        MOVE.B  in_data(A1, D1.W), D2   ; get character
+        CMP.B   #" ", D2
+        BCS.S   $30                     ; if control character then $30
+        CMP.B   #DEL, D2
+        BHI.S   $20                     ; if function key, then $20
+
+        ADDQ.W  #1., io_chan(A0)        ; else printable, so select output
+        MOVE.B  D2, D0
+        BRA     readln_ch_echo
+
+    $20                                 ; function key
+        CMP.B   #<function|"a">, D2
+        BEQ     readln_delete           ; if top left, then delete
+        CMP.B   #<function|"A">, D2
+        BEQ     readln_delete           ; if shift top left, then delete
+        CMP.B   #line_delete, D2
+        BEQ     readln_delete           ; if line delete, delete repeatedly
+        ADDQ.W  #1., io_chan(A0)        ; else select output channel
+        BRA.S   readln_fn_echo          ; and treat as general function key
+
+    $30 CMP.B   #BS, D2                 ; control character::
+        BEQ     readln_delete           ; if backspace, then delete
+        CMP.B   #TAB, D2
+        BEQ     readln_tab              ; if tab character, then expand
+        CMP.B   #CR, D2
+        BEQ.S   $40                     ; if at end of line, escape
+        CMP.B   #EOF, D2
+        BEQ.S   $40                     ; if end of file, then end of line too
+        CMP.B   #<control&"P">, D2      ; if DLE then KGM prefix character
+        BEQ     readln_kgm_prefix
+        ADDQ.W  #1., io_chan(A0)        ; else select output channel
+        BRA     readln_ctrl_echo        ; and treat as general control char
+
+    $40 ADDQ.W  #1., io_chan(A0)        ; select output channel
+        MOVE.L  #2., io_num_bytes(A0)   ; and echo newline for the end of line
+        PEA     rln_crlf
+        POP_L   io_buffer(A0)
+        BIOS    #write_data
+        CLR.L   D0                      ; ignore io result of echoing
+rln_exit
+        RELEASE io_length               ; release io block
+        RESTORE D1-D2/A0
+        RTS                             ; return from readln_serial
+
+rln_crlf
+       .BYTE    CR, LF
+       .ALIGN   2.
+
+readln_fn_echo  ; part of the routine readln_serial, which echoes characters
+                ; above DEL in the character sequence
+
+        MOVE.B  #"~", in_data(A1, D1.W)
+        BIOS    #write_data             ; put out ~
+        MOVE.B  D2, D0
+        BCLR    #7., D0
+        CMP.B   #" ", D0                ; if control character, run on
+        BCC.S   readln_ch_echo          ; otherwise, send the character
+
+readln_ctrl_echo; part of the routine readln_serial, which echoes characters
+                ; below space in the character sequence
+
+        MOVE.B  #"^", in_data(A1, D1.W)
+        BIOS    #write_data             ; put out ^
+        MOVE.W  D2, D0
+        BCLR    #7., D0
+        BSET    #6., D0
+
+readln_ch_echo  ; part of the routine readln_serial, which echoes characters
+                ; between space and delete in the character sequence
+
+        MOVE.B  D0, in_data(A1, D1.W)
+        BIOS    #write_data             ; print the character
+        MOVE.B  D2, in_data(A1, D1.W)   ; replace the actual typed character
+        SUBQ.W  #1., io_chan(A0)        ; reselect input
+        ADDQ.W  #1., D1                 ; increment writer
+        BRA     rln_next_char
+
+readln_delete   ; part of the routine readln_serial, which does and echos
+                ; backspace/line delete
+
+        SUBQ.W  #1., D1                 ; decrement writer
+        BEQ     rln_new_line            ; if at beginning of buffer, then done
+        CMPI.B  #DEL, in_data(A1, D1.W)
+        BLS.S   $10
+        BSR.S   $50                     ; delete ~ of function key
+        BCLR    #7., in_data(A1, D1.W)
+    $10 CMPI.B  #" ", in_data(A1, D1.W)
+        BCC.S   $20
+        BSR.S   $50                     ; delete ^ of control character
+    $20 BSR.S   $50                     ; delete character itself
+        CMP.B   #line_delete, D2        ; if line delete, then repeat
+        BEQ.S   readln_delete           ; until at beginning of line
+        BRA     rln_next_char
+
+    $50 ADDQ.W  #1., io_chan(A0)        ; select output channel
+        MOVE.L  #3., io_num_bytes(A0)   ; and write BS space BS
+        PEA     $100
+        POP_L   io_buffer(A0)
+        BIOS    #write_data
+        SUBQ.W  #1., io_chan(A0)        ; reselect input channel
+        RTS                             ; return from $50 in readln_delete
+
+  $100 .BYTE    BS, " ", BS
+       .ALIGN   2.
+
+readln_tab      ; part of the routine readln_serial, which expands and echos
+                ; tab characters
+
+        ADDQ.W  #1., io_chan(A0)        ; select output
+    $20 MOVE.B  #" ", in_data(A1, D1.W) ; overwrite tab with space
+        BIOS    #write_data             ; echo the original space
+        MOVE.B  D1, D0                  ; done if now in a column 0 mod 8
+        ANDI.B  #07H, D0                                                      
+        BEQ.S   $30
+        CMP.W   in_length(A1), D1       ; if at end of buffer, don't overfill
+        BEQ.S   $30
+        ADDQ.W  #1., D1                 ; else, add another space
+        BRA.S   $20
+    $30 SUBQ.W  #1., io_chan(A0)        ; reselect input
+        ADDQ.W  #1, D1                  ; and move on to next character
+        BRA     rln_next_char
+
+readln_kgm_prefix ; part of the routine readln_serial, which translates a
+                ; character prefixed by the code issued by KGM function keys
+                ; This translation may or may not be done by the underlying
+                ; BIOS at PRG
+
+        BIOS    #read_data              ; read a second character
+        MOVE.W  io_result(A0), D0
+        BNE     rln_exit                ; if failed to read, exit
+        ORI.B   #function, in_data(A1, D1.W) ; translate next character
+        BRA     rln_read_character      ; and accept as if BIOS had translated
+
+get_serial      ; routine called as an in_get_buffer routine
+                ; reads a new bufferfull from a serial line into the buffer
+                ; pointed at by A1
+                ; traps ^Y and opens a new output file in the out_buffer
+
+        SAVE    D0/A0
+        MOVE_BW in_channel(A1), D0
+        BSR     readln_serial           ; get a line of input
+        TST.W   D0
+        BEQ.S   $00
+        out_io_result 19., " while reading line"
+        MOVE.W  in_writer(A1), D0       ; get last character
+        MOVE.B  #EOF, in_data(A1, D0.W) ; set to be end of file
+    $00 MOVE.W  in_writer(A1), D0       ; get last character
+        CMPI.B  #EOF, in_data(A1, D0.W) ; test for end of file
+        BNE.S   $10
+        LEA     get_new_file, A0
+        MOVE.L  A0, in_get_buffer(A1)
+    $10 MOVE.W  in_writer(A1), D0       ; get last character
+        MOVE.B  #" ", in_data(A1, D0.W) ; change last character to space
+        SUBQ.W   #1., D0
+    $20 CMPI.B  #<control&"Y">, <1.+in_data>(A1, D0.W)
+        DBEQ    D0, $20
+        BNE.S   $30                     ; if there is a ^Y on the line
+        MOVE.W  D0, in_writer(A1)       ; abandon line at ^Y
+        LEA     get_put_new_file, A0
+        MOVE.L  A0, in_get_buffer(A1)
+    $30 RESTORE D0/A0
+        RTS                             ; return from get_serial
+
+put_serial      ; routine called as an out_put_buffer routine
+                ; writes any waiting characters from the output buffer
+                ; pointed at by A1
+                ; behaviour may be modified later with reference to the pb_
+                ; parameter in D0
+                ;
+                ;  pb_full_buffer
+                ;  pb_close_file
+
+        TST.W   out_writer(A1)          ; if no characters to send, do nothing
+        BEQ.S   $99
+        SAVE    D0-D1/A0                ; else, write the characters
+        ALLOC   io_length, A0
+        MOVE_BW out_channel(A1), D0
+        MOVE.W  D0, io_chan(A0)
+        PEA     <out_data+1.>(A1)
+        POP_L   io_buffer(A0)
+        CLR.W   io_control(A0)
+        MOVE_WL out_writer(A1), D1
+    $10 MOVE.L  D1, io_num_bytes(A0)
+        BIOS    #write_data
+        MOVE.W  io_result(A0), D0
+        BEQ.S   $15
+        out_io_result 14., " while writing"
+        LEA     put_new_file, A0
+        MOVE.L  A0, out_put_buffer(A1)
+        BRA.S   $40
+    $15 CMPI.B  #CR, out_data(A1, D1.W)
+        BNE.S   $20
+        MOVEQ   #1., D1
+        MOVE.B  #LF, out_data(A1, D1.W)
+        BRA.S   $10
+    $20 CLR.W   out_writer(A1)          ; mark all characters sent
+    $40 RELEASE io_length
+        RESTORE D0-D1/A0
+    $99 RTS                             ; return from put_serial
+
+;       end of file SECD.SRIAL.TEXT

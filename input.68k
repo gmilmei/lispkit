@@ -1,0 +1,257 @@
+;      file SECD.INPUT.TEXT
+
+; The get_char routines below are used by get_token to get the next character
+; from the input stream. The effect of a get_char macro is to fetch the next
+; character from the input stream through the buffer in A1 into the low byte
+; of D0
+
+       .MACRO   get_char
+        BSR     get_char_rt
+       .ENDM;   get_char
+
+get_char_rt     ; sets D0 low byte to next character from the input buffer
+                ; refilling the buffer if necessary.
+
+        SAVE    A0-A1
+        LEA     in_buffer, A1
+        MOVE.W  in_reader(A1), D0       ; reader pointer
+    $10 CMP.W   in_writer(A1), D0       ; compare with writer
+        BNE.S   $40                     ; while reader=writer get next buffer
+        MOVEA.L in_get_buffer(A1), A0
+        JSR     (A0)                    ; call next block routine
+        CLR.W   D0                      ; reader := 0
+        BRA.S   $10
+    $40 ADDQ.W  #1., D0                 ; increment reader
+        MOVE.W  D0, in_reader(A1)       ; save reader
+        MOVE.B  in_data(A1, D0.W), D0   ; read from buffer
+        RESTORE A0-A1
+        RTS                             ; return from get_char_rt
+
+       .MACRO   get_tok_start
+        SAVE    D1-D2/A0
+        MOVE.B  in_char, D0
+       .ENDM;   get_tok_start
+
+       .MACRO   get_tok_finish
+        LEA     in_char, A0
+        MOVE.B  %1, (A0)
+        RESTORE D1-D2/A0
+       .ENDM;   get_tok_finish
+
+get_tok_alpha   ; tail of get_token routine
+                ; called in case of first character of an alphanumeric token
+
+        cons    NIL, NIL
+;       MOVE.L  new_cell, W_reg
+        MOVE.L  A6, W_reg
+        MOVEA.L W_reg, A0
+        LSR.W   #1., D0                 ; restore value of first character
+gta0    ANDI.L  #0000007FH, D0          ; mask irrelevant bits
+        numb    D0                      ; store character
+;       MOVE.L  new_cell, D1
+        MOVE.L  A6, D1
+        update_head A0, D1
+        get_char
+get_tok_a1                              ; entry from get_tok_plus/minus
+        CMP.B   #"(", D0                ; if next char is "("
+        BEQ.S   $50                     ; then done
+        CMP.B   #")", D0                ; if next char is ")"
+        BEQ.S   $50                     ; then done
+        CMP.B   #".", D0                ; if next char is "."
+        BEQ.S   $50                     ; then done
+        CMP.B   #" ", D0                ; if next char is " "
+        BEQ.S   $50                     ; then done
+                                        ; else store next character
+        cons    NIL, NIL                ; make singleton list
+;       set_tail A0, new_cell
+        set_tail A0, A6                 ; and append to token
+;       MOVEA.L new_cell, A0
+        MOVEA.L A6, A0
+        BRA.S   gta0
+
+    $50 get_tok_finish D0               ; save last character
+        BRA     store_token             ; sets D0 and W_reg
+                                        ; return from get_token
+
+get_tok_minus   ; tail of get_token routine
+                ; called in case of minus sign
+                    
+        get_char                        ; get first digit
+        CMP.B   #"0", D0                ; if less than "0"
+        BCS.S   $50                     ; then should have been alphanumeric
+        CMP.B   #"9", D0                ; if greater than "9"
+        BHI.S   $50                     ; then take alphanumeric
+        MOVEQ   #-1., D1                ; set sign negative
+        BRA.S   get_tok_d1
+    $50                                 ; should have been alphanumeric
+        PEA     minus_numb
+        BRA.S   get_tok_s1
+
+get_tok_plus    ; tail of get_token routine
+                ; called in case of plus sign
+
+        get_char                        ; get first digit
+        CMP.B   #"0", D0                ; if less than "0"
+        BCS.S   $50                     ; then should have been alphanumeric
+        CMP.B   #"9", D0                ; if no more than "9"
+        BHI.S   $50                     ; then take alphanumeric
+        MOVEQ   #+1., D1                ; set sign positive
+        BRA.S   get_tok_d1
+    $50                                 ; should have been alphanumeric
+        PEA     plus_numb
+get_tok_s1                              ; entry from get_tok_minus
+        POP_L   D1
+        cons    D1, NIL                 ; make singleton list of sign
+;       MOVE.L  new_cell, W_reg
+        MOVE.L  A6, W_reg
+        MOVEA.L W_reg, A0
+        BRA     get_tok_a1              ; and treat rest as alphanumerics
+
+get_tok_digit   ; tail of get_token routine
+                ; called in case of initial digit
+
+        LSR.W   #1., D0                 ; restore value of first character
+        MOVEQ   #1., D1                 ; set sign to +1
+get_tok_d1                              ; entry from get_tok_plus/minus
+        ANDI.W  #0FH, D0                ; mask irrelevant bits of digit
+        MOVE.W  D0, D2                  ; and load accumulator
+        MULS    D1, D2                  ; with correct sign
+    $10 get_char                        ; get next character
+        CMP.B   #"0", D0                ; if less than "0"
+        BCS.S   $20                     ; then done with numeral
+        CMP.B   #"9", D0                ; if greater than "9"
+        BHI.S   $20                     ; then done with numeral
+        ANDI.L  #0000000FH, D0          ; else mask irrelevant bits of digit
+        MULS    D1, D0                  ; multiply digit by sign
+        LSL.L   #1., D2                 ; double accumulator
+        ADD.L   D2, D0
+        LSL.L   #2., D2                 ; multiply accumulator by a total of 8
+        ADD.L   D0, D2                  ; have multiplied D2 by 10, to 32 bits
+        BRA.S   $10
+    $20 MOVE.B  D0, D1                  ; done: put back last character
+        MOVE.L  D2, D0
+        get_tok_finish D1
+        numb    D0
+        MOVEQ   #atomic, D0
+;       MOVE.L  new_cell, W_reg
+        MOVE.L  A6, W_reg
+        RTS                             ; return from get_token
+
+get_token       ; called with the standard SECD machine registers,
+                ; inputs a token to W. Keeps the last put back
+                ; character in in_char, returns with D0 containing one of
+                ;     atomic, open_paren, close_paren, point,
+                ; with, in the case of atoms, the address of a cell
+                ; representing the atom in the W register
+
+        get_tok_start
+gt0     LSL.W   #1., D0                 ; double character, to make offset
+        ANDI.W  #00FEH, D0              ; mask any silly bits
+        MOVE.W  gtt(D0.W), D1           ; get offset of routine
+        JMP     gtt(D1.W)               ; and dispatch through table
+
+gtbl    get_char
+        BRA.S   gt0
+
+gtop    MOVEQ   #open_paren, D0
+        BRA.S   gt1
+
+gtcl    MOVEQ   #close_paren, D0
+        BRA.S   gt1
+
+gtpt    MOVEQ   #point, D0
+
+gt1     get_tok_finish #space           ; put back a space and
+        RTS                             ; return from get_token
+
+bl     .EQU     gtbl - *                        ; ignore, as space
+al     .EQU     get_tok_alpha - *               ; treat as letter
+dg     .EQU     get_tok_digit - *               ; treat as digit
+op     .EQU     gtop - *                        ; open parenthesis
+pt     .EQU     gtpt - *                        ; point
+cl     .EQU     gtcl - *                        ; close parenthesis
+pl     .EQU     get_tok_plus - *                ; plus sign
+mi     .EQU     get_tok_minus - *               ; minus sign
+
+gtt    .WORD al, al, al, al, al, al, al, al     ; 00 01 02 03 04 05 06 07
+       .WORD al, al, al, al, al, al, al, al     ; 08 09 10 11 12 13 14 15
+       .WORD al, al, al, al, al, al, al, al     ; 16 17 18 19 20 21 22 23
+       .WORD al, al, al, al, al, al, al, al     ; 24 25 26 27 28 29 30 31
+       .WORD bl, al, al, al, al, al, al, al     ; sp  !  "  #  $  %  &  '
+       .WORD op, cl, al, pl, al, mi, pt, al     ;  (  )  *  +  ,  -  .  /
+       .WORD dg, dg, dg, dg, dg, dg, dg, dg     ;  0  1  2  3  4  5  6  7
+       .WORD dg, dg, al, al, al, al, al, al     ;  8  9  :  ;  <  =  >  ?
+       .WORD al, al, al, al, al, al, al, al     ;  @  A  B  C  D  E  F  G
+       .WORD al, al, al, al, al, al, al, al     ;  H  I  J  K  L  M  N  O
+       .WORD al, al, al, al, al, al, al, al     ;  P  Q  R  S  T  U  V  W
+       .WORD al, al, al, al, al, al, al, al     ;  X  Y  Z  [  \  ]  ^  _
+       .WORD al, al, al, al, al, al, al, al     ;  `  a  b  c  d  e  f  g
+       .WORD al, al, al, al, al, al, al, al     ;  h  i  j  k  l  m  n  o
+       .WORD al, al, al, al, al, al, al, al     ;  p  q  r  s  t  u  v  w
+       .WORD al, al, al, al, al, al, al, al     ;  x  y  z  {  |  }  ~ del
+
+
+get_exp         ; called with the SECD machine standard registers, reads an
+                ; s-expression onto the top of the S register
+                ; may corrupt any of D0-D1/A0
+
+;       cons_push NIL, S_reg
+        cons_push NIL, A1
+        BSR     get_token               ; D0 := next token
+;       LEA     (S_reg), A0             ; point A0 at head field of S
+        LEA     (A1), A0
+                                        ; and get an expression into (A0)
+
+    $10         ; called with SECD machine registers, and
+                ; D0 = next token, A0 = destination of result
+                ; reads an s-expression into (A0)
+                ; may corrupt any of D0-D1/A0
+
+        CMP.L   #atomic, D0             ; if exp starts with an atom
+        BNE.S   $20
+        MOVE.L  W_reg, D0               ; then it is an atom
+        BRA     $70
+
+    $20 CMP.L   #open_paren, D0         ; if exp starts open parentheseis
+        BNE.S   $50                     ; then it is a list
+        BSR     get_token               ; skip the open parenthesis
+
+    $30 CMP.L   #close_paren, D0        ; if list starts with close parenthesis
+        BNE.S   $40
+        MOVE.L  NIL, D0                 ; then it is NIL
+        BRA.S   $70
+
+    $40 cons    NIL, NIL                ; else read tail of list
+;       MOVE.L  new_cell, D1
+        MOVE.L  A6, D1
+        update_head A0, D1
+;       LEA     (new_cell), A0          ; get destination cell
+        LEA     (A6), A0
+        PUSH_L  A0
+        BSR     $10                     ; read its head
+        POPA_L  A0
+        ADDQ.L  #tail, A0               ; and then set up to read its tail
+        BSR     get_token
+        CMP.L   #point, D0              ; if tail is dotted atom
+        BNE.S   $30
+        BSR     get_token               ; then skip point
+        BSR.S   $10                     ; read the atom
+        BRA     get_token               ; skip close bracket
+                                        ; and return from routine at $10
+
+    $50 CMP.L   #close_paren, D0        ; if exp starts with close parenthesis
+        BNE.S   $60
+        PEA     close_cell              ; then treat this as an atom
+        BRA.S   $65
+
+    $60 CMP.L   #point, D0              ; if exp starts with a point
+        BNE.S   $80
+        PEA     point_cell              ; then treat this as an atom
+    $65 POP_L   D0
+
+    $70 update_head A0, D0              ; may corrupt D0
+        RTS
+
+    $80 EXIT    #rc_error
+
+;       end of file SECD.INPUT.TEXT

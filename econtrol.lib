@@ -1,0 +1,27 @@
+((edit lambda(f i)(editloop i(state f(quote NIL)f)))(editloop lambda(i t
+)(letrec(if(atom i)(return_file(head(top f s d)))(if(eq key(quote print
+))(return_message(list newline file)(editloop(tail i)t'))(if(eq key(quote
+continue))(editloop(tail i)t')(return_message(list newline(quote Error)
+)(editloop(tail i)t)))))(key if(atom step)(quote error)(head step))(file
+head(tail step))(t' head(tail(tail step)))(step editstep(head i)t)(f head
+t)(s head(tail t))(d head(head(tail t)))))(editstep lambda(c t)(let(if(
+atom c)(if(eq c(quote d))((strict step)(delete1 f s d))(if(eq c(quote file
+))(print f t)(if(eq c(quote p))(print(pretty(dump(quote 3)f))t)(if(eq c
+(quote top))(step(top f s d))(if(eq c(quote u))((strict step)(up f s d)
+)(if(eq c(quote undelete))(step(undelete f s d))(if(number c)((strict step
+)(move c f s d))(quote error))))))))(if(and(eq key(quote a))twoargs)((strict
+step)(after pattern template f s d))(if(and(eq key(quote b))twoargs)((strict
+step)(before pattern template f s d))(if(and(eq key(quote c))twoargs)((
+strict step)(change pattern template f s d))(if(and(eq key(quote d))onearg
+)((strict step)(delete pattern f s d))(if(and(eq key(quote e))twoargs)(
+(strict step)(exchange pattern template f s d))(if(and(eq key(quote f))
+onearg)((strict step)(find pattern f s d))(if(and(eq key(quote g))(and twoargs
+(not(number(head(tail c))))))(step(global pattern template f s d))(if(and
+(eq key(quote p))onearg)(if(number argument)(print(pretty(dump argument
+f))t)(if(eq argument(quote all))(print(pretty f)t)(if(eq argument(quote
+file))(print f t)(quote error))))(if(and(eq key(quote r))onearg)(step(replace
+argument f s d))(quote error)))))))))))(key head c)(onearg unless(atom(
+tail c))(eq(tail(tail c))(quote NIL)))(twoargs unless(atom(tail c))(unless
+(atom(tail(tail c)))(eq(tail(tail(tail c)))(quote NIL))))(argument head
+(tail c))(pattern compilep(head(tail c)))(template compilet(head(tail(tail
+c))))(f head t)(s head(tail t))(d head(tail(tail t))))))

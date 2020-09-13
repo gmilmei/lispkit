@@ -1,0 +1,441 @@
+;       file SECD.OPS.TEXT
+
+;       op-codes: general manipulations
+
+       .MACRO   EVEN_DN                 ; round down a data register
+        BCLR    #0., %1
+       .ENDM;   EVEN_DN
+
+       .MACRO   EVEN_UP                 ; round up a data register
+        ADDQ.L  #1., %1
+        BCLR    #0., %1
+       .ENDM;   EVEN_UP
+
+       .MACRO   ALLOC                   ; allocate %1 bytes of stack space
+        LEA     <<-<%1>>&<~0001H>>(SP), SP
+       .IF      %2 <> SP
+        MOVEA.L SP, %2
+       .ENDC
+       .ENDM;   ALLOC
+
+       .MACRO   RELEASE                 ; release %1 bytes of stack space
+        LEA     <<<%1>+0001H>&<~0001H>>(SP), SP
+       .ENDM;   RELEASE
+
+       .MACRO   MOVE_BW                 ; move a byte into a word register
+        CLR.W   %2
+        MOVE.B  %1, %2
+       .ENDM;   MOVE_BW
+
+       .MACRO   MOVE_BL                 ; move a byte into a long register
+        CLR.L   %2
+        MOVE.B  %1, %2
+       .ENDM;   MOVE_BL
+                
+       .MACRO   MOVE_WL                 ; move a word into a long register
+        CLR.L   %2
+        MOVE.W  %1, %2
+       .ENDM;   MOVE_WL
+
+;       op-codes: 32 bit arithmetic
+
+       .MACRO   set_sign                ; make %1 positive, keeping sign of
+        TST.L   %1                      ; %1 * %2 contstant.
+        BGE.S   $00
+        NEG.L   %2
+        NEG.L   %1
+    $00                                 ; exits with state of %1 in SR
+       .ENDM;   set_sign
+
+       .MACRO   MULTIPLY                ; %1 <- %1 * %2, uses %1..%5 data regs
+        MOVEQ   #1., %3                 ; set sign positive
+        set_sign %1, %3                 ; make %1 positive, say ax + b
+        set_sign %2, %3                 ; make %2 positive, say cx + d
+        MOVE.L  %1, %4
+        MOVE.L  %1, %5
+        SWAP    %1
+        MULU    %2, %1                  ; %1 := ad
+        MULU    %2, %4                  ; %4 := bd
+        SWAP    %2
+        MULU    %5, %2                  ; %2 := bc
+        ADD.L   %2, %1                  ; %1 := ad + bc
+        SWAP    %1
+        CLR.W   %1                      ; %1 := (ad + bc) x
+        ADD.L   %4, %1                  ; %1 := (ad + bc) x + bd
+        set_sign %3, %1
+       .ENDM;   MULTIPLY
+
+       .MACRO   DIVIDE                  ; %1 := %1 rem %2, %3 := %1 div %2
+                                        ; needs %1..%5 data regs
+        MOVEQ   #0., %3                 ; quotient register
+        MOVEQ   #1., %4                 ; set sign positive
+        set_sign %1, %4                 ; make %1 positive, say x
+        set_sign %2, %4                 ; make %2 positive, say y
+        BNE.S   $99
+        EXIT    #rc_divide_zero         ; trap division by zero
+    $99 CMP.L   %1, %2                  ; if x < y, then done
+        BHI.S   $03                     ; quotient is 0, rem x
+        MOVEQ   #-1., %5                ; call this d
+    $00 LSL.L   #1., %2                 ; double %2
+        ADDQ.W  #1., %5                 ; keeping %2 = 2^(d+1) * y
+        CMP.L   %1, %2                  ; and repeat until x < %2
+        BLS.S   $00
+    $01 LSR.L   #1., %2                 ; halve %2
+        LSL.L   #1., %3                 ; and double quotient
+        CMP.L   %1, %2                  ; if %1 too big to be remainder
+        BHI.S   $02
+        SUB.L   %2, %1                  ; then subtract 2^d * y
+        ADDQ.L  #1., %3                 ; add one to the quotient
+    $02 DBRA    %5, $01                 ; adjust d, and repeat until %2 = y
+    $03 TST.L   %4                      ; check expected sign
+        BGE.S   $05
+        NEG.L   %1                      ; if negative, negate remainder
+        BEQ.S   $04                     ;     if no remainder, remainder right
+        ADD.L   %2, %1                  ;     otherwise, add y to remainder
+        ADDQ.L  #1., %3                 ;                and increment quotient
+    $04 NEG.L   %3                      ;     and negate quotient
+    $05
+       .ENDM;   DIVIDE
+
+;       op-codes: stack manipulation
+
+       .MACRO   PUSH_W
+        MOVE.W  %1, -(SP)
+       .ENDM;   PUSH_W
+
+       .MACRO   PUSH_L
+        MOVE.L  %1, -(SP)
+       .ENDM;   PUSH_L
+
+       .MACRO   PUSH_ML
+        MOVEM.L %1, -(SP)
+       .ENDM;   PUSH_ML
+
+       .MACRO   POP_W
+        MOVE.W  (SP)+, %1
+       .ENDM;   POP_W
+
+       .MACRO   POP_L
+        MOVE.L  (SP)+, %1
+       .ENDM;   POP_L
+
+       .MACRO   POPA_W
+        MOVEA.W (SP)+, %1
+       .ENDM;   POPA_W
+
+       .MACRO   POPA_L
+        MOVEA.L (SP)+, %1
+       .ENDM;   POPA_L
+
+       .MACRO   SAVE                    ; save registers
+        MOVEM.L %1, -(SP)
+       .ENDM;   SAVE
+
+       .MACRO   RESTORE                 ; restore registers
+        MOVEM.L (SP)+, %1
+       .ENDM;   RESTORE
+
+;       op-codes: environment calls
+
+       .MACRO   BIOS                    ; long call to BIOS, %1 is parameter
+        MOVEQ   %1, D0
+        TRAP    #14.
+       .ENDM;   BIOS
+
+       .MACRO   BREAK                   ; set break point
+        TRAP    #15.
+       .ENDM;   BREAK
+
+       .MACRO   EXIT                    ; parameter is return code
+        MOVEQ   %1, D0
+        BRA     exit_label
+       .ENDM;   EXIT
+
+       .MACRO   set_led                 ; also affects screen !!!
+        PUSH_L  D0
+        BIOS    #supervisor_mode
+       .IF      %1
+        MOVE.B  #<00H | 06H | 01H>, <0C061H + 06H>
+       .ELSE
+        MOVE.B  #<00H | 06H | 00H>, <0C061H + 06H>
+       .ENDC
+        ANDI.W  #0DFFFH, SR
+       .IF      screen_led&<~gc_count>
+        out_string 0.
+       .IF      %1
+       .BYTE    2., "#", BS
+       .ELSE
+       .BYTE    2., " ", BS
+       .ENDC;   %1
+       .ALIGN   2.
+       .ENDC;   screen_led&<~gc_count>
+        POP_L   D0
+       .ENDM;   set_led
+
+;       op-codes: i/o routines
+
+       .MACRO   out_string              ; output inline constant string
+        BSR     write_string
+       .IF      %1 <> 0
+        STRING  %1, %2                  ; length of string and characters
+       .ALIGN   2.
+       .ENDC
+       .ENDM;   out_string
+
+       .MACRO   out_number              ; output number from D0
+        BSR     write_number
+       .ENDM;   out_number
+
+       .MACRO   out_line                ; output inline string and newline
+        BSR     write_string
+        LINE    %1, %2                  ; length of string and characters
+       .ALIGN   2.
+       .ENDM;   out_line
+
+       .MACRO   out_io_res
+        BSR     write_io_result
+        LINE    %1, %2
+       .ALIGN   2.
+       .ENDM;   out_io_result
+
+       .MACRO   out_question
+        BSR     write_question
+        STRING  %1, %2
+       .ALIGN   2.
+       .ENDM;   out_question
+
+;       op-codes: cell manipulation
+
+       .MACRO   set_head                ; head(%2) := %3, type %1
+        MOVE.L  %3, (%2)                ; NB scribbled on mark data
+        MOVE.B  %1, (%2)
+       .ENDM;   set_head
+
+       .MACRO   update_head             ; head(%1) := %2; corrupts %2
+        MOVE.W  %2, 2.(%1)
+        SWAP    %2
+        MOVE.B  %2, 1.(%1)
+       .ENDM;   update_head
+
+       .MACRO   set_tail                ; tail(%1) := %2
+        MOVE.L  %2, tail(%1)
+       .ENDM;   set_tail
+
+       .MACRO   set_val                 ; val(%1) := %2
+        MOVE.L  %2, val(%1)
+       .ENDM;   set_val
+
+       .MACRO   set_atom                ; sets %2 to be atom %3 of type %1
+        MOVE.B  %1, (%2)
+        set_val %2, %3
+       .ENDM;   set_atom
+
+       .MACRO   set_pair                ; sets %2 to be a pair of %3, %4 with
+        set_head %2, %1, %3             ; type %1
+        set_tail %2, %4
+       .ENDM;   set_pair
+
+;       op-codes: cell type testing
+
+       .MACRO   IF_is_atom              ; jump to %2 if %1 is type of an atom
+        BTST    #atom_bit_index, %1
+        BNE.S   %2
+       .ENDM;   IF_is_atom
+
+       .MACRO   IFL_is_atom             ; longer jump version of IF_is_atom
+        BTST    #atom_bit_index, %1
+        BNE     %2
+       .ENDM;   IFL_is_atom
+
+       .MACRO   IF_gc_atom              ; jump to %2 if %1 is type of gc atom
+        BTST    #gcat_bit_index, %1
+        BNE.S   %2
+       .ENDM;   IF_gc_atom
+
+       .MACRO   IF_is_composite         ; jump to %2 if %1 is not the type of
+        BTST    #atom_bit_index, %1     ; an atom
+        BEQ.S   %2
+       .ENDM;   IF_is_composite
+
+       .MACRO   IF_is_number            ; jump to %2 if %1 is number type
+        BTST    #numb_bit_index, %1
+        BNE.S   %2
+       .ENDM;   IF_is_number
+
+       .MACRO   IF_not_number            ; jump to %2 if %1 is not number type
+        BTST    #numb_bit_index, %1                           
+        BEQ.S   %2
+       .ENDM;   IF_not_number
+                
+       .MACRO   IF_is_free              ; test whether cell marked last time
+        BTST    #mark_bit_index, %1
+        BEQ.S   %2
+       .ENDM;   IF_is_free
+
+       .MACRO   IF_is_marked            ; test whether cell marked last time
+        BTST    #mark_bit_index, %1
+        BNE.S   %2
+       .ENDM;   IF_is_marked
+
+       .MACRO   IF_busy_clear_mark      ; clear mark, and if cell was marked,
+        BCLR    #mark_bit_index, %1     ; jump to %2
+        BNE.S   %2
+       .ENDM;   IF_busy_clear_mark
+                          
+       .MACRO   IF_busy_set_mark        ; set mark, and if cell was marked,
+        BSET    #mark_bit_index, %1     ; jump to %2
+        BNE.S   %2
+       .ENDM;   IF_busy_set_mark
+
+       .MACRO   set_marked              ; set mark
+        BSET    #mark_bit_index, %1
+       .ENDM;   set_marked
+
+       .IF      ~recursive              ; routines for keeping g/c state
+
+       .MACRO   clear_count             ; mark cell as busy in the head
+        BCLR    #state_bit_index, %1
+       .ENDM;   clear_count
+
+       .MACRO   set_count               ; mark cell as busy in the tail
+        BSET    #state_bit_index, %1
+       .ENDM;   set_count
+
+       .MACRO   IF_count                ; if cell is busy in the head, jump to
+        BTST    #state_bit_index, %1    ; %2, if tail, %3
+        BEQ.S   %2
+        BRA.S   %3
+       .ENDM;   IF_count
+
+       .ENDC;   ~recursive
+
+;       op-codes: cell allocation
+
+       .IF      compact_cons            ; if generating small code
+
+       .MACRO   allocate                ; finds a new free cell
+        BSR     alloc_rt
+       .ENDM;   allocate
+
+       .ENDC;   compact_cons
+
+       .IF      ~compact_cons           ; if able to generate inline code
+
+       .MACRO   allocate                ; finds a new free cell, quickly
+;   $00 ADDQ.L  #cell_size, new_cell
+    $00 ADDQ.L  #cell_size, A6
+;       CMPA.L  top_address, new_cell
+        CMPA.L  top_address, A6
+        BLS.S   $01
+        PEA     $02                     ; set up subroutine call to return
+        BRA     alloc_rt                ; end of inline code
+;   $01 IF_busy_clear_mark (new_cell), $00
+    $01 IF_busy_clear_mark (A6), $00
+    $02
+       .ENDM;   allocate
+
+       .ENDC;   ~compact_cons
+
+       .MACRO   make_pair               ; make a new cell of type %1,
+        allocate                        ; containing (%2.%3)
+;       set_head %1, new_cell, %2
+        set_head %1, A6, %2
+;       set_tail new_cell, %3
+        set_tail A6, %3
+       .ENDM;   make_pair
+
+       .MACRO   cons
+        make_pair #cons_type, %1, %2
+       .ENDM;   cons
+
+       .MACRO   init_cons
+        LEA     %1, A0
+        LEA     %2, A1
+        MOVE.L  A1, (A0)
+        MOVE.B  #<cons_type|mark_bit>, (A0)
+        LEA     %3, A1
+        MOVE.L  A1, tail(A0)
+       .ENDM;   init_cons
+
+       .MACRO   cons_constant           ; space, at least, for a constant cons
+       .BLOCK   8.
+       .ENDM;   cons_constant
+
+       .MACRO   recipe
+        make_pair #recipe_type, %1, %2
+       .ENDM;   recipe
+
+       .MACRO   make_atom
+        allocate
+;       set_atom %1, new_cell, %2
+        set_atom %1, A6, %2
+       .ENDM;   make_atom
+
+       .MACRO   symb
+        make_pair #symb_type, NIL, %1   ; %1 is the val field
+       .ENDM;   symb
+
+       .MACRO   symb_constant           ; space, at least, for a constant symb
+       .BLOCK   8.
+       .ENDM;   symb_constant
+
+       .MACRO   init_symb
+        LEA     %1, A0
+        MOVE.L  NIL, (A0)               ; the field of a symbol that isn't val
+        MOVE.B  #<symb_type|mark_bit>, (A0)
+        LEA     %2, A1
+        MOVE.L  A1, val(A0)               
+       .ENDM;   init_symb
+
+       .MACRO   numb
+        make_atom #numb_type, %1
+       .ENDM;   numb
+
+       .MACRO   numb_constant           ; a constant number cell, %1 <= 255
+       .BYTE <numb_type|mark_bit>, 0, 0, 0, 0, 0, 0, %1
+       .ENDM;   numb_constant
+
+       .MACRO   update                  ; copies cell at %2 to cell at %1
+                                        ; allowed to corrupt D0, D1, D2
+        MOVEM.L (%2), D0-D1
+        MOVE.L  (%1), D2
+        MOVEM.L D0-D1, (%1)
+        EOR.L   D2, D0                  ; compare mark bits
+        BPL.S   $00                     ; mark bit is sign bit
+        BCHG    #mark_bit_index, (%1)   ; if different, change back
+    $00
+       .ENDM;   update
+
+;       op-codes: in heap stacks
+
+       .MACRO   cons_push
+        cons %1, %2
+;       MOVEA.L new_cell, %2
+        MOVEA.L A6, %2
+       .ENDM;   cons_push
+
+       .MACRO   head_pop
+        MOVEA.L (%1), %1
+       .ENDM;   head_pop
+
+       .MACRO   tail_pop
+        MOVEA.L tail(%1), %1
+       .ENDM;   tail_pop
+
+;       fetch/execute cycle
+
+       .IF      stand_alone
+
+       .MACRO   END                     ; end instruction successfully
+        JMP     (A3)
+       .ENDM;   END
+
+       .ELSE
+
+       .MACRO   END                     ; end instruction successfully
+        BRA     fetch
+       .ENDM;   END
+
+       .ENDC
+
+;       end of file SECD.OPS.TEXT

@@ -1,0 +1,13 @@
+PROGRAM host
+
+; USES {$U SysXtra.Library} Kernel
+
+; PROCEDURE guest(VAR system_id, prefix_id : VID; date_stamp : DATEREC)
+  ; EXTERNAL
+
+; BEGIN
+  ; guest(SYVID, DKVID, THEDATE)
+  ; writeln(output, 'Returning to p-machine')
+  END {host}
+.
+

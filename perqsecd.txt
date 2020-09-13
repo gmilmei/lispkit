@@ -1,0 +1,128 @@
+program LispKit(Input, Output, InFile, OutFile);
+
+(*-----------------------------------------------------------------*)
+(*                                                                 *)
+(*   Reference model lazy interactive SECD machine, 3              *)
+(*      -- version 3a                                    April 83  *)
+(*      -- IMPLODE and EXPLODE instructions, version 3b    May 83  *)
+(*                                                                 *)
+(*   Modifications specific to ICL Perq POS Pascal gaj   April 83  *)
+(*                                                                 *)
+(*-----------------------------------------------------------------*)
+(*                                                                 *)
+(*    (c)  Copyright  P Henderson, G A Jones, S B Jones            *)
+(*                    Oxford University Computing Laboratory       *)
+(*                    Programming Research Group                   *)
+(*                    8-11 Keble Road                              *)
+(*                    OXFORD  OX1 3QD                              *)
+(*                                                                 *)
+(*-----------------------------------------------------------------*)
+(*                                                                 *)
+(*   Documentation:                                                *)
+(*                                                                 *)
+(*     P Henderson, G A Jones, S B Jones                           *)
+(*         The LispKit Manual                                      *)
+(*         Oxford University Computing Laboratory                  *)
+(*         Programming Research Group technical monograph PRG-32   *)
+(*         Oxford, August 1983                                     *)
+(*                                                                 *)
+(*     P Henderson                                                 *)
+(*         Functional Programming: Application and Implementation. *)
+(*         Prentice-Hall International, London, 1980               *)
+(*                                                                 *)
+(*-----------------------------------------------------------------*)
+
+(*------------------ Machine dependent constants ------------------*)
+
+imports Perq_string from PERQ_STRING; (*  for the type string   *)
+imports stream from STREAM;           (* for I/O error trapping *)
+
+label 99;
+
+const TopCell = 10000;     (*    size of heap storage    *)
+
+(*--------------- Machine dependent file management ---------------*)
+
+var InOpen : boolean;
+    InFile : text;
+    OutFile : text;
+
+procedure TryReset(s : string);
+
+  handler ResetError(f : pathname);
+  begin InOpen := false; exit(TryReset) end {ResetError};
+
+begin reset(InFile, s);
+      InOpen := true
+end {TryReset};
+
+function TryRewrite(s : string) : boolean;
+
+  handler RewriteError(f : pathname);
+  begin TryRewrite := false; exit(TryRewrite) end {RewriteError};
+
+begin rewrite(OutFile, s);
+      TryRewrite := true
+end {TryRewrite};
+
+procedure OpenInFile;
+var s : string;
+begin writeln(Output);
+      write(Output, 'Take input from where? ');
+      readln(Input, s);
+      if s = '' then s := 'CONSOLE:';
+      TryReset(s);
+      if not InOpen then write(Output, 'Cannot find ', s)
+end {OpenInFile};
+
+procedure CloseInFile; begin close(InFile); InOpen := false end;
+
+procedure ChangeOutFile;
+var s : string;
+    ok : boolean;
+begin close(OutFile);
+      repeat writeln(Output);
+             write(Output, 'Send output to where? ');
+             readln(Input, s);
+             if s = '' then s := 'CONSOLE:';
+             ok := TryRewrite(s);
+             if not ok then write(Output, 'Cannot write to ', s)
+      until ok
+end {ChangeOutFile};
+
+(*------------------- Character input and output ------------------*)
+
+procedure GetChar(var ch : char);
+const EM = 25;
+begin while not InOpen do OpenInFile;
+      if eof(InFile) then begin CloseInFile; ch := ' ' end
+      else
+        if eoln(InFile) then begin readln(InFile); ch := ' ' end
+      else
+        begin read(InFile, ch);
+              if ch = chr(EM) then
+                   begin readln(InFile); ChangeOutFile; ch := ' ' end
+        end
+end {GetChar};
+
+procedure PutChar(ch : char);
+const CR = 13;
+begin if ch = chr(CR) then writeln(OutFile) else write(OutFile, ch)
+end {PutChar};
+
+(*------- Machine dependent initialisation and finalisation -------*)
+
+procedure Initialise(Version, SubVersion : char);
+begin writeln(Output, 'Perq Pascal SECD machine ', Version, SubVersion);
+      TryReset('SECD.BOOT');
+      if not InOpen then writeln(Output, 'No file SECD.BOOT');
+      rewrite(OutFile, 'CONSOLE:')
+end {Initialise};
+
+procedure Terminate; begin close(OutFile); exit(LispKit) end {Terminate};
+                               
+(*------------------ Machine independent code ---------------------*)
+
+; procedure Machine; { omitted }
+
+; begin Machine; 99: end {LispKit}.

@@ -1,0 +1,254 @@
+;       file SECD.DECL.TEXT
+
+;       environment: return codes
+
+rc_ok                  .EQU -1.
+rc_cell_store_full     .EQU -2.
+rc_divide_zero         .EQU -3.
+rc_invalid_inst        .EQU -4.
+rc_error               .EQU -5.
+       .IF stand_alone
+rc_break               .EQU -6.
+rc_min                 .EQU rc_break
+       .ELSE
+rc_no_ram_disk         .EQU -6.
+rc_min                 .EQU rc_no_ram_disk
+       .ENDC
+
+;       BIOS specific constants
+
+enter_debugger         .EQU  0. ; parameters to BIOS
+init_bios_params       .EQU  1.
+find_top_of_store      .EQU  2.
+chain_program          .EQU  9.
+init_channel           .EQU 10.
+read_data              .EQU 11.
+write_data             .EQU 12.
+supervisor_mode        .EQU 19.
+
+term_in_channel        .EQU   1.; BIOS channel numbers
+term_out_channel       .EQU   2.
+printer_channel        .EQU   6.
+rem_in_channel         .EQU   7.
+rem_out_channel        .EQU   8.
+ram_disk_channel       .EQU  11.
+config_channel         .EQU 128.
+
+io_length      .EQU 18.         ; i/o descriptors for BIOS calls
+                                ; NB for Sage ij, 16. suffices, but the
+                                ; Winchester driver on Sage iv requires
+                                ; a further word for the block number
+io_chan        .EQU  0.
+io_result      .EQU  2.
+io_num_bytes   .EQU  4.
+io_buffer      .EQU  8.
+io_block_low   .EQU 12.
+io_control     .EQU 14.
+io_block_high  .EQU 16.
+
+;       assorted i/o constants
+
+block_length   .EQU 512.        ; size of units of input
+
+;       UCSD file names and disk directories
+
+vid_len        .EQU  7.         ; longest permitted volume name (p-m/c limit)
+tid_len        .EQU 15.         ; longest premitted file name   (p-m/c limit)
+
+d_block        .EQU  2.         ; offset of first directory block in volume
+
+d_max_files    .EQU 77.         ; greatest number of possible headings in vol
+
+d_length       .EQU <4.*block_length>   ; size of disk directory
+d_vol_id       .EQU  6.         ; offset of volume name in directory
+d_eov_block    .EQU 14.         ; offset of number of blocks in volume
+d_num_files    .EQU 16.         ; offset of file count
+
+d_stride       .EQU 26.         ; length of individual file headings
+d_first_block  .EQU  0.         ; first block of file, in file hading
+d_end_block    .EQU  2.         ; first block to follow file
+d_file_type    .EQU  5.         ; file type, read as a byte
+d_file_id      .EQU  6.         ; offset of file name in file heading
+d_num_bytes    .EQU 22.         ; number of bytes in the last block
+d_date         .EQU 24.         ; offset of date last written in file heading
+
+d_type_mask    .EQU 0FH         ; file type constants
+d_text_type    .EQU 03H
+d_data_type    .EQU 05H
+d_svol_type    .EQU 09H
+
+never          .EQU 100.*0200H  ; flag for temporary files
+                                ; year 100: set in date field
+
+;       well known machine addresses
+
+low_core       .EQU 000400H     ; the first free location above BIOS data
+stack_length   .EQU   8000.     ; a generous estimate
+
+;       unit table and file names
+
+unit_stride    .EQU <3.+vid_len>; bytes in a unit table entry
+unit_name      .EQU      0.     ; offset of unit name in unit table entry
+unit_in_chan   .EQU <1.+vid_len>; channel number to be used for input
+unit_out_chan  .EQU <2.+vid_len>; channel number to be used for output
+
+       .MACRO   unit_entry
+        FL_STRING vid_len, %1, %2
+       .BYTE    %3, %4
+       .ENDM;   unit_entry
+                
+fn_first_name  .EQU 2.          ; offset of first name, space is for length
+fn_max_names   .EQU 3.          ; maximum number of components in a file name
+fn_stride      .EQU <1.+tid_len>; bytes in a file name component
+fn_length      .EQU <fn_first_name+<fn_max_names*fn_stride>>
+
+io_res_fn_inv          .EQU -16.; invalid file name
+io_res_in_inv          .EQU -17.; input not possible from this file
+io_res_out_inv         .EQU -18.; output not possible to this file
+io_res_no_vol          .EQU -19.; no such volume on line
+io_res_no_file         .EQU -20.; no such file on line
+io_res_no_room         .EQU -21.; no room on volume
+io_res_dov             .EQU -22.; directory will not fit on volume
+io_res_lost_file       .EQU -23.; cannot find heading of currently open file
+
+io_res_min             .EQU io_res_lost_file
+
+;       character set
+
+control        .EQU  31.        ; character modifiers
+function       .EQU 128.
+
+NULL           .EQU            0.
+BS             .EQU  control&"H"
+TAB            .EQU  control&"I"
+LF             .EQU  control&"J"
+CR             .EQU  control&"M"
+DLE            .EQU  control&"P"
+EOF            .EQU  control&"Z"
+space          .EQU          " "        ; principally for use with .IF !
+line_delete    .EQU function|"C"
+DEL            .EQU          127.
+
+;       SECD machine details
+
+W_reg          .EQU D3          ; normal register use
+NIL            .EQU D4
+top_address    .EQU D5
+; S_reg        .EQU A1
+; E_reg        .EQU A2
+;                   A3          ; used either by p-machine break routine, or
+;                               ; secd machine break routine
+; C_reg        .EQU A4
+; D_reg        .EQU A5
+; new_cell     .EQU A6
+
+;       heap declarations
+
+cell_size      .EQU 8.          ; size of cell in bytes
+log_cell_size  .EQU 3.          ; log base 2 of cell_size, used for division
+tail           .EQU 4.          ; position of tail in cell
+val            .EQU tail        ; position of the value of a symbol or number
+
+cons_type      .EQU 0.          ; cell type flags
+recipe_type    .EQU 1.
+symb_type      .EQU 2.
+numb_type      .EQU 6.
+
+
+type_mask      .EQU 07H         ; bits occupied by cell type
+
+atom_bit_index .EQU  1.         ; index of bit which is set if cell is atomic
+gcat_bit_index .EQU  2.         ; similarly, but for gc atoms
+numb_bit_index .EQU  2.         ; index of bit set only in numbers
+
+mark_bit       .EQU 80H         ; garbage collector mark bit
+mark_bit_index .EQU  7.         ; top bit of type byte
+
+       .IF ~recursive
+state_bit_index.EQU  6.         ; bit for state of non-recursive mark
+       .ENDC; ~recursive
+
+;       i/o constants: structure of an input buffer
+
+in_length      .EQU 0.
+in_reader      .EQU 2.
+in_writer      .EQU 4.
+in_extra       .EQU 6.                  ; overhead on buffer size
+in_data        .EQU <in_extra-1.>       ; indexed from 1
+
+;       i/o constants: fields specific to the standard input buffer
+
+in_next_block  .EQU -14.        ; first block of rest of the file
+in_end_block   .EQU -10.        ; disk block after end
+in_get_buffer  .EQU  -6.        ; routine for next block
+in_channel     .EQU  -2.        ; current input channel
+
+in_file_length .EQU  14.        ; overhead before buffer
+
+;       i/o constants: structure of an output buffer
+
+out_length     .EQU 0.
+out_writer     .EQU 2.
+out_extra      .EQU 4.
+out_data       .EQU <out_extra-1.>
+
+;       i/o constants: fields specific to the standard output buffer
+
+out_date_stamp .EQU -20.        ; a date stamp for new permanent files
+out_vol_offset .EQU -18.        ; first block of the volume of a block file
+out_next_block .EQU -14.        ; first unwritten block of the file
+out_end_block  .EQU -10.        ; first block after the end of the free space
+out_put_buffer .EQU  -6.        ; the routine that empties the buffer
+out_channel    .EQU  -2.        ; number of the current output channel
+
+out_file_length.EQU  20.        ; overhead before buffer
+
+;       i/o constants: resons for calling the out_put_buffer routine
+
+pb_full_buffer         .EQU 0.  ; buffer is not empty (may not be full)
+pb_close_file          .EQU 1.  ; make permanent any temporary files
+
+;       token declarations
+
+atomic         .EQU 0.                  ; token type values
+open_paren     .EQU 1.
+close_paren    .EQU 2.
+point          .EQU 3.
+
+;       SECD op-codes
+
+max_op_code    .EQU 28.                 ; largest SECD op-code
+
+;       fixed data structures: strings
+
+       .MACRO   STRING                  ; length is %1, characters are %2
+       .BYTE    %1
+       .ASCII   %2
+       .ENDM;   STRING
+
+       .MACRO   FL_STRING               ; fixed length is %1, actual length %2
+        STRING  %2, %3
+       .BLOCK   %1 - %2, " "
+       .ENDM;   FL_STRING
+
+       .MACRO   LINE                    ; like string, but followed by CR, LF
+       .BYTE    <%1>+2.
+       .IF      %1 <> 0
+       .ASCII   %2
+       .ENDC
+       .BYTE    CR, LF
+       .ENDM;   LINE
+
+       .MACRO   OFFSET                  ; EQU to %1 offset by %2
+       .EQU     %1 + <%2>
+       .ENDM;   OFFSET
+
+       .MACRO   OFF_EVEN                ; EQU to %1 offset by an even
+       .EQU     %1 + <<<%2>+1>&<~1>>    ; amount, at least %2
+       .ENDM;   OFF_EVEN
+
+       .MACRO   LABEL                   ; word PC relative address of %1
+       .WORD    <%1> - *
+       .ENDM;   LABEL
+
+;       end of file SECD.DECL.TEXT

@@ -1,0 +1,95 @@
+;       file SECD.MC.TEXT
+
+TRAP_M  ; instruction executed whenever the C stream is seen to be invalid
+
+        EXIT    #rc_invalid_inst
+
+       .IF      stand_alone
+
+int_foreground  ; called by the BIOS when an interrupt key is typed
+
+        LEA     int_background, A3
+        RTS
+
+int_background  ; executed in place of a normal fetch after the termination
+                ; of an interrupted instruction
+
+        LEA     fetch, A3               ; clear interrupt flag
+        out_question 11., "Interrupt? " ; ask for confirmation
+        BNE.S   fetch                   ; if denied, then resume
+        EXIT    #rc_break               ; else exit
+
+       .ENDC;   stand_alone
+
+; control passes to this point when the machine has been properly initialised
+
+execute
+        BSR     get_exp                 ; push primary bootstrap onto S reg
+;       MOVEA.L (S_reg), S_reg          ; move closure to S
+        MOVEA.L (A1), A1
+;       MOVEA.L NIL, D_reg              ; D := NIL
+        MOVEA.L NIL, A5
+;       MOVEA.L tail(S_reg), E_reg      ; E := environment of closure
+        MOVEA.L tail(A1), A2
+;       MOVEA.L (S_reg), C_reg          ; C := code of closure
+        MOVEA.L (A1), A4
+;       MOVEA.L NIL, S_reg              ; S := NIL
+        MOVEA.L NIL, A1
+
+fetch                                   ; fetch next instruction
+;       MOVEA.L (C_reg), A0             ; assume head(C) is a number
+        MOVEA.L (A4), A0
+        MOVE.L  val(A0), D0             ; get next op code in D0
+        CMPI.L  #max_op_code, D0        ; check for wildly wrong opcodes
+        BHI     TRAP_M                  ; instruction out of range
+        LSL.W   #1., D0                 ; double instruction number
+        ADD.W   op_code_table(D0.W), D0
+        JMP     op_code_table(D0.W)     ; jump through jump table
+
+op_code_table
+        label TRAP_M    ;  0: illegal instruction
+        label LD_M      ;  1: LD
+        label LDC_M     ;  2: LDC
+        label LDF_M     ;  3: LDF
+        label AP_M      ;  4: AP
+        label RTN_M     ;  5: RTN
+        label DUM_M     ;  6: DUM
+        label RAP_M     ;  7: RAP
+        label SEL_M     ;  8: SEL
+        label JOIN_M    ;  9: JOIN
+        label CAR_M     ; 10: CAR
+        label CDR_M     ; 11: CDR
+        label ATOM_M    ; 12: ATOM
+        label CONS_M    ; 13: CONS
+        label EQ_M      ; 14: EQ
+        label ADD_M     ; 15: ADD
+        label SUB_M     ; 16: SUB
+        label MUL_M     ; 17: MUL
+        label DIV_M     ; 18: DIV
+        label REM_M     ; 19: REM
+        label LEQ_M     ; 20: LEQ
+        label STOP_M    ; 21: STOP
+        label LDE_M     ; 22: LDE
+        label UPD_M     ; 23: UPD
+        label AP0_M     ; 24: AP0
+        label READ_M    ; 25: READ
+        label PRINT_M   ; 26: PRINT
+        label IMPLODE_M ; 27: IMPLODE
+        label EXPLODE_M ; 28: EXPLODE
+
+exit_label                              ; D1 contains return code
+        MOVEA.L save_stack, SP
+        out_line 0, ""
+        LEA     rc_mess_table, A1
+        BSR     write_indexed           ; write reason for termination
+        out_line 0, ""
+        LEA     out_buffer, A1          ; try closing output stream
+        BSR     close_output
+       .IF      stand_alone
+        BRA     reboot
+       .ELSE
+        RESTORE D6-D7/A3-A6
+        RTS                             ; return from call of guest
+       .ENDC;   stand_alone
+
+;       end of file SECD.MC.TEXT

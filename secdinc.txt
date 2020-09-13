@@ -1,0 +1,727 @@
+/*******************************************************************
+ *                                                                 *
+ *   Reference model lazy interactive SECD machine  August 1982    *
+ *      Translation into the C notation December 1982 gaj          *
+ *                                                                 *
+ *      BEWARE: this is not a version 3 machine                    *
+ *                                                                 *
+ *         Copyright   P. Henderson, S.B. Jones, G.A.Jones,        *
+ *                     Programming Research Group                  *
+ *                     Oxford University                           *
+ *                     8-11 Keble Road                             *
+ *                     OXFORD  OX1 3QG                             *
+ *                                                                 *
+ *******************************************************************
+ *                                                                 *
+ *   Documentation:                                                *
+ *                                                                 *
+ *         P. Henderson : Functional Programming:                  *
+ *                        Application and Implementation.          *
+ *                        Prentice-Hall International              *
+ *                        Series in Computer Science.              *
+ *                        Pr-Hall Int Inc, London, 1980            *
+ *                                                                 *
+ *         S. B. Jones :  Extensions for lazy interactive          *
+ *                        SECD machine                             *
+ *                                                                 *
+ *******************************************************************/
+
+#include "/usr/fs/geraint/lib/syntax.h"
+                               /* algol like synatax macros for c      */
+#include <stdio.h>             /* standard i/o: fopen/fclose/getc/putc */
+
+#define CR              '\15'
+#define EM              '\31'
+
+TYPE integer symb;
+#define SymbLength      12
+#define NumbSymbs       200
+
+TYPE struct RECORD
+              counter Lengthfield;
+              char letterfield[SymbLength]
+            ENDRECORD SymbRecord;
+
+SymbRecord VAR StringStore[NumbSymbs] =
+  {{0,""},{3,"NIL"},{1,"T"},{1,"F"},{1,"("},{1,"."},{1,")"},{10,"**RECIPE**"}};
+
+#define Length(s)        ((StringStore[s]).Lengthfield)
+#define Letters(s)       (&(((StringStore[s]).letterfield)[0]))
+#define Initial(s)       (((StringStore[s]).letterfield)[0])
+
+#define NILString        1
+#define TString          2
+#define FString          3
+#define OPENPARENTHESIS  4
+#define FULLSTOP         5
+#define CLOSEPARENTHESIS 6
+#define RECIPEString     7
+
+#define InToken          0
+
+#define FirstSymb        1
+#define FirstFreeSymb    8
+#define TopSymb          (NumbSymbs-1)
+
+boolean FUNCTION StringEq(a,b) symb a, b;
+BEGIN
+  char VAR *ca, *cb;
+  counter VAR i;
+  IF Length(a) == Length(b)
+  THEN ca = Letters(a); cb = Letters(b);
+       FOR i=1; i<=Length(a); i++
+       DO IF (*(ca++))!=(*(cb++)) THEN RESULTIS False ENDIF ENDFOR;
+       RESULTIS True
+  ELSE RESULTIS False
+  ENDIF
+END /* StringEq */
+
+PROCEDURE StringCopy(s,d) char *s,*d;
+BEGIN
+  char VAR *ss, *dd;
+  ss=s; dd=d;
+  WHILE ((*(dd++))=(*(ss++)))!='\0' DO ENDWHILE;
+END /* StringCopy */
+
+symb VAR FreeSymb = FirstFreeSymb;
+
+TYPE counter TokenType;
+
+#define NUMERIC         0                       /* values of token type */
+#define DELIMITER       1
+#define ALPHANUMERIC    2
+
+#define COMPOSITETAG    2                       /* tag values for cells */
+#define MARKTAG         4
+#define CONSTYPE        0
+#define RECIPETYPE      1
+#define NUMBERTYPE      COMPOSITETAG
+#define SYMBOLTYPE      (COMPOSITETAG|1)
+
+TYPE integer address;
+#define NumbCells       16000
+
+char VAR tagfield[NumbCells];
+integer VAR carfield[NumbCells];
+integer VAR cdrfield[NumbCells];
+
+#define Tag(n)          (tagfield[n])
+
+#define Marked(n)       ((Tag(n)&MARKTAG)!=0)
+#define UnMarked(n)     ((Tag(n)&MARKTAG)==0)
+#define SetMark(n)      (Tag(n)|=MARKTAG)
+#define ClearMark(n)    (Tag(n)&=(~MARKTAG))
+#define IVal(n)         (carfield[n])
+#define SVal(n)         (carfield[n])
+#define Head(n)         (carfield[n])
+#define Tail(n)         (cdrfield[n])
+#define Body(n)         (carfield[n])
+#define Env(n)          (cdrfield[n])
+
+#define IsAtom(n)       ((Tag(n)&COMPOSITETAG)!=0)
+#define IsComposite(n)  ((Tag(n)&COMPOSITETAG)==0)
+
+#define FirstCell       0
+#define TopCell         (NumbCells-1)
+
+address VAR S, E, C, D, W, NIL, T, F, FreeCell;
+
+boolean VAR Halted;
+
+/**** Garbage collection routines ****/
+
+PROCEDURE Mark(n) address n;
+BEGIN
+  IF UnMarked(n)
+  THEN SetMark(n); IF IsComposite(n) THEN Mark(Head(n)); Mark(Tail(n)) ENDIF
+  ENDIF
+END /* Mark */
+
+PROCEDURE Col ()                /* corresponds to "Collect" in PASCAL */
+BEGIN
+  address VAR i;
+  integer VAR c;
+  FreeCell=(-1);
+  c=0;
+  i=FirstCell-1;
+  REPEAT
+    IF Marked(++i)
+    THEN ClearMark(i)
+    ELSE Tail(i)=FreeCell; FreeCell=i; c++    
+    ENDIF
+  UNTIL i==TopCell
+  ENDREPEAT
+END /* Col */
+
+/**** Storge allocation routines ****/
+
+#define Abort(m)                {fputs(m,stderr);exit(0);}
+
+symb FUNCTION Store(t) symb t;
+BEGIN
+  symb VAR i;
+  IF FreeSymb > TopSymb
+  THEN Abort("String store overflow\n"); RESULTIS i /* irrelevant */
+  ELSE counter VAR j;
+       char VAR *c0, *c1;
+       Length(FreeSymb)=Length(t);
+       c0=Letters(FreeSymb); c1=Letters(t);
+       FOR j=1; j<=SymbLength; j++ DO (*(c0++))=(*(c1++)) ENDFOR;
+       FOR i=FirstSymb; NOT (StringEq(i,t)); i++ DO ENDFOR;
+       IF i==FreeSymb THEN FreeSymb++ ENDIF;
+       RESULTIS i
+  ENDIF
+END /* Store */
+
+PROCEDURE CollectGarbage ()
+BEGIN
+  Mark(S); Mark(E); Mark(C); Mark(D); Mark(W); Mark(NIL); Mark(T); Mark(F);
+  Col();
+  IF FreeCell==(-1) THEN Abort("cell store overflow\n") ENDIF
+END /* CollectGarbage */
+
+address FUNCTION Cell ()
+BEGIN
+  address VAR i;
+  IF FreeCell==(-1) THEN CollectGarbage() ENDIF;
+  i = FreeCell; FreeCell = Tail(FreeCell); RESULTIS i
+END /* Cell */
+
+address FUNCTION Cons ()
+BEGIN
+  address VAR i;
+  i = Cell(); Tag(i) = CONSTYPE; Head(i) = NIL; Tail(i) = NIL; RESULTIS i
+END /* Cons */
+
+address FUNCTION Recipe ()
+BEGIN
+  address VAR i;
+  i = Cell(); Tag(i) = RECIPETYPE; Head(i) = NIL; Tail(i) = NIL; RESULTIS i
+END /* Recipe */
+
+address FUNCTION Symb ()
+BEGIN
+  address VAR i;
+  i = Cell(); Tag(i) = SYMBOLTYPE; RESULTIS i
+END /* Symb */
+
+address FUNCTION Numb ()
+BEGIN
+  address VAR i;
+  i = Cell(); Tag(i) = NUMBERTYPE; RESULTIS i
+END /* Numb */
+
+#define IsCons(n)       (Tag(n)==CONSTYPE)
+#define IsRecipe(n)     (Tag(n)==RECIPETYPE)
+#define IsNumber(n)     (Tag(n)==NUMBERTYPE)
+#define IsSymb(n)     (Tag(n)==SYMBOLTYPE)
+
+PROCEDURE InitListStorage ()
+BEGIN
+  address VAR i;
+  FOR i=FirstCell; i!=TopCell; i++ DO ClearMark(i); Tail(i)=(i+1) ENDFOR;
+/*
+  ClearMark(TopCell); Tail(TopCell)=(-1);
+ */
+/* the ClearMark(..) causes the compiler to fail */
+  Tag(TopCell)=0; Tail(TopCell)=(-1);
+  FreeCell=FirstCell; FreeSymb=FirstFreeSymb;
+  NIL=Symb(); SVal(NIL)=NILString;
+  T=Symb();   SVal(T)=TString;
+  F=Symb();   SVal(F)=FString
+END /* InitListStorage */
+
+PROCEDURE Update (x,y) address x,y;
+BEGIN
+  Tag(x)=Tag(y);                               /* should not be marked */
+  SWITCHON Tag(y)
+  INTO CASE CONSTYPE:
+       CASE RECIPETYPE: Head(x)=Head(y); Tail(x)=Tail(y) ENDCASE
+       CASE NUMBERTYPE: IVal(x)=IVal(y) ENDCASE
+       CASE SYMBOLTYPE: SVal(x)=SVal(y) ENDCASE
+       DEFAULT: printf("Tag wrong in Update: %d", Tag(y)); Abort("") ENDCASE
+  ENDSWITCH
+END /* Update */
+
+/**** Character and token i/o ****/
+
+PROCEDURE mksymbol(s) symb s;
+BEGIN
+  counter VAR i; char VAR *c;
+  Length(s)=0;
+  c=Letters(s); FOR i=1; i<=SymbLength; i++ DO (*(c++))=' ' ENDFOR
+END /* mksymbol */
+
+PROCEDURE ConcatCS(c,s0,s1) char c; symb s0, s1;
+BEGIN
+  char VAR *c0, *c1; counter i;
+  Length(s1)=Length(s0)+1;
+  c0= &(Letters(s0)[SymbLength-2]); c1= &(Letters(s1)[SymbLength-1]);
+  FOR i=(SymbLength-1); i>=1; i-- DO (*(c1--))=(*(c0--)) ENDFOR;
+  (*c1)=c
+END /* ConcatCS */
+
+PROCEDURE ConcatSC(s0,c,s1) symb s0; char c; symb s1;
+BEGIN
+  char VAR *c0, *c1; counter i;
+  c0=Letters(s0); c1=Letters(s1);
+  FOR i=1; i<=Length(s0); i++ DO (*(c1++))=(*(c0++)) ENDFOR;
+  (*c1)=c;
+  Length(s1)=Length(s0)+1;
+END /* ConcatSC */
+
+char VAR OutCh, InCh;
+integer VAR OutLength;
+counter VAR InTokType;
+
+FILE *fopen(), *InFile, *OutFile;
+
+PROCEDURE InitLexical () BEGIN InCh=' ' END /* InitLexical */
+
+PROCEDURE OpenInFile (m) char *m;
+BEGIN
+  char VAR InName[80];
+  char *c;
+  REPEAT
+    fputs(m,stdout); fgets(InName,80,stdin);
+    IF (*(c=InName))=='\n'
+    THEN InFile=stdin; RETURN
+    ELSE WHILE (*(++c))!='\n' DO ENDWHILE; (*c)='\0' 
+    ENDIF
+  UNTIL (InFile=fopen(InName,"r"))!=NULL
+  ENDREPEAT
+END /* OpenInFile */
+
+PROCEDURE CloseInFile ()
+BEGIN IF InFile!=stdin THEN fclose(InFile) ENDIF END /* CloseInFile */
+
+PROCEDURE OpenOutFile (m) char *m;
+BEGIN
+  char VAR OutName[80];
+  char *c;
+  REPEAT
+    fputs(m,stdout); fgets(OutName,80,stdin);
+    IF (*(c=OutName))=='\n'
+    THEN OutFile=stdout; RETURN
+    ELSE WHILE (*(++c))!='\n' DO ENDWHILE; (*c)='\0'
+    ENDIF
+  UNTIL (OutFile=fopen(OutName,"w"))!=NULL
+  ENDREPEAT
+END /* OpenOutFile */
+
+PROCEDURE CloseOutFile ()
+BEGIN
+  IF OutLength!=0 THEN ForceLineOut() ENDIF;
+  IF OutFile!=stdout THEN fclose(OutFile) ENDIF
+END /* CloseOutFile */
+
+PROCEDURE GetChar ()
+BEGIN
+  integer VAR i;
+  i=getc(InFile);
+  SWITCHON i
+  INTO
+    CASE EOF:
+      CloseInFile();
+      OpenInFile("Continue reading from where? ");
+      InitLexical()
+      ENDCASE
+    CASE '\n':
+    CASE CR:      /* to be able to read files "converted" by /etc/fl */
+      InCh=' '
+      ENDCASE
+    CASE EM:
+      CloseOutFile();
+      WHILE ((getc(stdin))!='\n') DO ENDWHILE;
+      OpenOutFile("Redirect output to where? ");
+      InCh=' '
+      ENDCASE
+    DEFAULT:
+      InCh=i;
+      ENDCASE
+  ENDSWITCH;
+END /* GetChar */
+
+#define IsSpace(ch)             ((ch)==' ')
+#define IsDigit(ch)             (('0'<=(ch))AND((ch)<='9'))
+#define IsSign(ch)              (((ch)=='-')OR((ch)=='+'))
+#define IsDelimiter(ch)         (((ch)=='(')OR((ch)=='.')OR((ch)==')'))
+
+PROCEDURE GetToken(Token,TType) symb Token; TokenType *TType;
+BEGIN
+  mksymbol(Token);
+  WHILE IsSpace(InCh) DO GetChar() ENDWHILE;
+  ConcatSC(Token,InCh,Token); GetChar();
+  IF IsDigit(Initial(Token)) OR (IsDigit(InCh) AND IsSign(Initial(Token)))
+  THEN *TType=NUMERIC;
+       WHILE IsDigit(InCh)
+       DO IF Length(Token)<SymbLength THEN ConcatSC(Token,InCh,Token) ENDIF;
+          GetChar()
+       ENDWHILE
+  ELSEIF IsDelimiter(Initial(Token))
+  THEN *TType=DELIMITER
+  ELSE *TType=ALPHANUMERIC;
+       WHILE NOT (IsDelimiter(InCh) OR IsSpace(InCh))
+       DO IF Length(Token)<SymbLength THEN ConcatSC(Token,InCh,Token) ENDIF;
+          GetChar()
+       ENDWHILE
+  ENDIF
+END /* GetToken */
+
+PROCEDURE ForceLineOut ()                                      
+BEGIN putc('\n',OutFile); OutLength=0 END /* ForceLineOut */
+
+PROCEDURE Check(length) counter length;
+BEGIN IF (OutLength+length+1) > 80 THEN ForceLineOut() ENDIF END /* Check */
+
+PROCEDURE PutChar ()
+BEGIN
+  IF OutCh==CR
+  THEN ForceLineOut()
+  ELSE putc(OutCh,OutFile); OutLength+=1
+  ENDIF
+END /* PutChar */
+
+PROCEDURE PutToken(Token) symb Token;
+BEGIN
+  counter VAR i;
+  char VAR *c;
+  Check(Length(Token));
+  c=Letters(Token);
+  FOR i=1; i<=Length(Token); i++
+  DO IF (OutCh=(*(c++)))!=' ' THEN  PutChar() ENDIF
+  ENDFOR;
+  OutCh=' '; PutChar()
+END /* PutToken */
+
+PROCEDURE InitOutput () BEGIN OutLength=0 END /* InitOutput */
+
+/**** S-Expression i/o ****/
+
+PROCEDURE ToString(n,s) integer n; symb s;
+BEGIN
+  boolean VAR neg;
+  integer VAR nn;
+  neg=(n<0);nn=(neg?-n:n); mksymbol(s);
+  IF nn==0 THEN ConcatCS('0',s,s) ENDIF;
+  WHILE nn>0 DO ConcatCS((char)('0'+(nn%10)),s,s);nn=nn/10 ENDWHILE;
+  IF neg THEN ConcatCS('-',s,s) ENDIF
+END /* ToString */
+
+PROCEDURE ToInteger(s,n) symb s; integer *n;
+BEGIN
+  char VAR *c;
+  integer VAR nn;
+  counter VAR i;
+  c=Letters(s); IF IsSign(*c) THEN c++; i=2 ELSE i=1 ENDIF;
+  nn=0;
+  FOR i=i; i<=Length(s); i++ DO nn=(10*nn)+((*(c++))-'0') ENDFOR;
+  (*n)=((Initial(s)=='-')?-nn:nn)
+END /* ToInteger */
+
+PROCEDURE Scan () BEGIN GetToken(InToken,&InTokType) END /* Scan */
+
+PROCEDURE GetExp(e) address *e;
+BEGIN
+  IF StringEq(InToken,OPENPARENTHESIS)
+  THEN Scan(); GetEList(e)
+  ELSEIF InTokType==NUMERIC
+  THEN (*e)=Numb(); ToInteger(InToken,&IVal(*e))
+  ELSE (*e)=Symb(); SVal(*e)=Store(InToken)
+  ENDIF 
+END /* GetExp */
+
+PROCEDURE GetEList(e) address *e;             /* "GetExpList" in the PASCAL */
+BEGIN
+  IF StringEq(InToken,CLOSEPARENTHESIS)
+  THEN (*e)=NIL
+  ELSE (*e)=Cons();
+       GetExp(&Head(*e)); Scan();
+       IF StringEq(InToken,FULLSTOP)
+       THEN Scan(); GetExp(&Tail(*e)); Scan();
+       ELSE GetEList(&Tail(*e))
+       ENDIF
+  ENDIF
+END /* GetEList */
+
+PROCEDURE InitSyntax() BEGIN Scan() END /* InitSyntax */
+
+PROCEDURE PutExp(e) address e;
+BEGIN
+  IF IsRecipe(e)
+  THEN PutToken(RECIPEString)
+  ELSEIF IsSymb(e)
+  THEN PutToken(SVal(e))
+  ELSEIF IsNumber(e)
+  THEN ToString(IVal(e),InToken); PutToken(InToken)
+  ELSE
+    address VAR ee = e;
+    PutToken(OPENPARENTHESIS);
+    WHILE IsCons(ee) DO PutExp(Head(ee)); ee=Tail(ee) ENDWHILE;
+    IF NOT (IsSymb(ee) AND (SVal(ee)==SVal(NIL)))
+    THEN PutToken(FULLSTOP); PutExp(ee)
+    ENDIF;
+    PutToken(CLOSEPARENTHESIS)
+  ENDIF
+END /* PutExp */
+
+/**** Microcode for the SECD machine ****/
+
+PROCEDURE LDX()
+BEGIN
+  address VAR Wx; integer VAR i;
+  Wx=E;
+  FOR i=IVal(Head(Head(Tail(C)))); i>=1; i-- DO Wx=Tail(Wx) ENDFOR;
+  Wx=Head(Wx);
+  FOR i=IVal(Tail(Head(Tail(C)))); i>=1; i-- DO Wx=Tail(Wx) ENDFOR;
+  Wx=Head(Wx);
+  W=Cons(); Head(W)=Wx; Tail(W)=S; S=W;
+  C=Tail(Tail(C))
+END /* LDX */
+
+PROCEDURE LDCX()
+BEGIN
+  W=Cons(); Head(W)=Head(Tail(C)); Tail(W)=S; S=W;
+  C=Tail(Tail(C))
+END /* LDCX */
+
+PROCEDURE LDFX()
+BEGIN
+  W=Cons(); Head(W)=Cons(); Head(Head(W))=Head(Tail(C));
+  Tail(Head(W))=E; Tail(W)=S; S=W;
+  C=Tail(Tail(C))
+END /* LDFX */
+
+PROCEDURE APX()
+BEGIN
+  W=Cons(); Head(W)=Tail(Tail(S));
+  Tail(W)=Cons(); Head(Tail(W))=E;
+  Tail(Tail(W))=Cons(); Head(Tail(Tail(W)))=Tail(C);
+  Tail(Tail(Tail(W)))=D; D=W;
+  W=Cons(); Head(W)=Head(Tail(S)); Tail(W)=Tail(Head(S)); E=W;
+  C=Head(Head(S)); S=NIL
+END /* APX */
+
+PROCEDURE RTNX()
+BEGIN
+  W=Cons(); Head(W)=Head(S); Tail(W)=Head(D); S=W;
+  E=Head(Tail(D)); C=Head(Tail(Tail(D)));
+  D=Tail(Tail(Tail(D)))
+END /* RTNX */
+
+PROCEDURE DUMX()
+BEGIN W=Cons(); Head(W)=NIL; Tail(W)=E; E=W; C=Tail(C) END /* DUMX */
+
+PROCEDURE RAPX()
+BEGIN
+  W=Cons(); Head(W)=Tail(Tail(S));
+  Tail(W)=Cons(); Head(Tail(W))=Tail(E);
+  Tail(Tail(W))=Cons(); Head(Tail(Tail(W)))=Tail(C);
+  Tail(Tail(Tail(W)))=D; D=W;
+  E=Tail(Head(S)); Head(E)=Head(Tail(S));
+  C=Head(Head(S)); S=NIL
+END /* RAPX */
+
+PROCEDURE SELX()
+BEGIN
+  W=Cons(); Head(W)=Tail(Tail(Tail(C))); Tail(W)=D; D=W;
+  IF SVal(Head(S))==SVal(T)
+  THEN C=Head(Tail(C))
+  ELSE C=Head(Tail(Tail(C)))
+  ENDIF;
+  S=Tail(S)
+END /* SELX */
+
+PROCEDURE JOINX() BEGIN C=Head(D); D=Tail(D) END /* JOINX */
+
+PROCEDURE CARX()
+BEGIN
+  W=Cons(); Head(W)=Head(Head(S)); Tail(W)=Tail(S); S=W; C=Tail(C)
+END /* CARX */
+
+PROCEDURE CDRX()
+BEGIN
+  W=Cons(); Head(W)=Tail(Head(S)); Tail(W)=Tail(S); S=W; C=Tail(C)
+END /* CDRX */
+
+PROCEDURE ATOMX()
+BEGIN
+  W=Cons();
+  IF IsAtom(Head(S)) THEN Head(W)=T ELSE Head(W)=F ENDIF;
+  Tail(W)=Tail(S); S=W; C=Tail(C)
+END /* ATOMX */
+
+PROCEDURE CONSX()
+BEGIN
+  W=Cons(); Head(W)=Cons();
+  Head(Head(W))=Head(S); Tail(Head(W))=Head(Tail(S));
+  Tail(W)=Tail(Tail(S)); S=W; C=Tail(C)
+END /* CONSX */
+
+PROCEDURE EQX()
+BEGIN
+  W=Cons();
+  IF (   IsSymb(Head(S)) AND IsSymb(Head(Tail(S)))
+     AND (SVal(Head(S)) == SVal(Head(Tail(S))))        )
+  OR (   IsNumber(Head(S)) AND IsNumber(Head(Tail(S)))
+     AND (IVal(Head(S)) == IVal(Head(Tail(S))))        )
+  THEN Head(W)=T
+  ELSE Head(W)=F
+  ENDIF;
+  Tail(W)=Tail(Tail(S)); S=W; C=Tail(C)
+END /* EQX */
+
+PROCEDURE ADDX()
+BEGIN
+  W=Cons(); Head(W)=Numb();
+  IVal(Head(W))=IVal(Head(Tail(S)))+IVal(Head(S));
+  Tail(W)=Tail(Tail(S)); S=W; C=Tail(C)
+END /* ADDX */
+
+PROCEDURE SUBX()
+BEGIN
+  W=Cons(); Head(W)=Numb();
+  IVal(Head(W))=IVal(Head(Tail(S)))-IVal(Head(S));
+  Tail(W)=Tail(Tail(S)); S=W; C=Tail(C)
+END /* SUBX */
+
+PROCEDURE MULX()
+BEGIN
+  W=Cons(); Head(W)=Numb();
+  IVal(Head(W))=IVal(Head(Tail(S)))*IVal(Head(S));
+  Tail(W)=Tail(Tail(S)); S=W; C=Tail(C)
+END /* MULX */
+
+PROCEDURE DIVX()
+BEGIN
+  W=Cons(); Head(W)=Numb();
+  IVal(Head(W))=IVal(Head(Tail(S)))/IVal(Head(S));
+  Tail(W)=Tail(Tail(S)); S=W; C=Tail(C)
+END /* DIVX */
+
+PROCEDURE REMX()
+BEGIN
+  W=Cons(); Head(W)=Numb();
+  IVal(Head(W))=IVal(Head(Tail(S)))%IVal(Head(S));
+  Tail(W)=Tail(Tail(S)); S=W; C=Tail(C)
+END /* REMX */
+
+PROCEDURE LEQX()
+BEGIN
+  W=Cons();
+  IF IVal(Head(Tail(S)))<=IVal(Head(S)) THEN Head(W)=T ELSE Head(W)=F ENDIF;
+  Tail(W)=Tail(Tail(S)); S=W; C=Tail(C)
+END /* LEQX */
+
+PROCEDURE STOPX()
+BEGIN
+  IF IsAtom(Head(S))
+  THEN Halted=True
+  ELSE
+    W=Cons(); Head(W)=Tail(S);
+    Tail(W)=Cons(); Head(Tail(W))=E;
+    Tail(Tail(W))=Cons(); Head(Tail(Tail(W)))=C;
+    Tail(Tail(Tail(W)))=D; D=W;
+    C=Head(Head(Head(S)));
+    W=Cons(); Head(W)=Tail(Head(S));
+    Tail(W)=Tail(Head(Head(S)));
+    E=W; S=NIL
+  ENDIF
+END /* STOPX */
+
+PROCEDURE LDEX()
+BEGIN
+  W=Cons(); Tail(W)=S;
+  Head(W)=Recipe(); Body(Head(W))=Head(Tail(C)); Env(Head(W))=E;
+  S=W; C=Tail(Tail(C))
+END /* LDEX */
+
+PROCEDURE UPDX()
+BEGIN
+  Update(Head(Head(D)),Head(S));
+  S=Head(D); E=Head(Tail(D)); C=Head(Tail(Tail(D)));
+  D=Tail(Tail(Tail(D)))
+END /* UPDX */
+
+PROCEDURE AP0X()
+BEGIN
+  IF IsRecipe(Head(S))
+  THEN
+    W=Cons(); Head(W)=S;
+    Tail(W)=Cons(); Head(Tail(W))=E;
+    Tail(Tail(W))=Cons(); Head(Tail(Tail(W)))=Tail(C);
+    Tail(Tail(Tail(W)))=D;
+    D=W; C=Body(Head(S)); E=Env(Head(S)); S=NIL
+  ELSE C=Tail(C)
+  ENDIF
+END /* AP0X */
+
+PROCEDURE READX()
+BEGIN
+  InitSyntax();
+  W=Cons(); GetExp(&Head(W)); Tail(W)=S; S=W; C=Tail(C)
+END /* READX */
+
+PROCEDURE PRINTX()
+BEGIN InitOutput(); PutExp(Head(S)); S=Tail(S); C=Tail(C) END /* PRINTX */
+
+PROCEDURE CHRX()
+BEGIN
+  mksymbol(InToken); ConcatSC(InToken,(char)IVal(Head(S)),InToken);
+  W=Cons(); Head(W)=Symb(); SVal(Head(W))=Store(InToken);
+  Tail(W)=Tail(S); S=W; C=Tail(C)
+END /* CHRX */
+
+/**** Main control program ****/
+
+PROCEDURE Execute()
+BEGIN
+  CYCLE
+    SWITCHON (int)(IVal(Head(C)))
+    INTO
+      CASE  1: LDX()    ENDCASE;
+      CASE  2: LDCX()   ENDCASE;
+      CASE  3: LDFX()   ENDCASE;
+      CASE  4: APX()    ENDCASE;
+      CASE  5: RTNX()   ENDCASE;
+      CASE  6: DUMX()   ENDCASE;
+      CASE  7: RAPX()   ENDCASE;
+      CASE  8: SELX()   ENDCASE;
+      CASE  9: JOINX()  ENDCASE;
+      CASE 10: CARX()   ENDCASE;
+      CASE 11: CDRX()   ENDCASE;
+      CASE 12: ATOMX()  ENDCASE;
+      CASE 13: CONSX()  ENDCASE;
+      CASE 14: EQX()    ENDCASE;
+      CASE 15: ADDX()   ENDCASE;
+      CASE 16: SUBX()   ENDCASE;
+      CASE 17: MULX()   ENDCASE;
+      CASE 18: DIVX()   ENDCASE;
+      CASE 19: REMX()   ENDCASE;
+      CASE 20: LEQX()   ENDCASE;
+      CASE 21: STOPX(); IF Halted THEN RETURN ENDIF ENDCASE;
+      CASE 22: LDEX()   ENDCASE;
+      CASE 23: UPDX()   ENDCASE;
+      CASE 24: AP0X()   ENDCASE;
+      CASE 25: READX()  ENDCASE;
+      CASE 26: PRINTX() ENDCASE;
+      CASE 27: CHRX()   ENDCASE;
+      DEFAULT: PutExp(S); Abort("illegal instruction"); ENDCASE
+    ENDSWITCH
+  ENDCYCLE
+END /* Execute */
+
+
+PROCEDURE main()
+BEGIN
+
+  InitListStorage();
+  S=NIL; E=NIL; C=NIL; D=NIL; W=NIL; Halted=False;
+  OpenInFile("Where is the object code? ");
+  InitLexical(); InitSyntax(); GetExp(&C); CloseInFile();
+  OpenInFile("Where are the data? ");
+  InitLexical();
+  OpenOutFile("Send output where? ");
+
+  Execute(); CloseOutFile()
+END /* main */

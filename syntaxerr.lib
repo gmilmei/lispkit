@@ -1,0 +1,3 @@
+((err_undef quote 1)(err_fewargs quote 2)(err_manyargs quote 3)(err_arglist
+quote 4)(err_invform quote 5)(err_invdef quote 6)(err_deftwice quote 7)
+(err_formlist quote 8)(err_formarg quote 9)(err_actllist quote 10))

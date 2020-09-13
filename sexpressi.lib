@@ -1,0 +1,22 @@
+((dump let(lambda(n f)(if(atom f)f(if(leq n(quote 0))token(let(if(and(eq
+h token)(if(atom t)(eq t token)(and(eq(head t)token)(eq(tail t)(quote NIL
+)))))token(cons h t))(h dump(sub n(quote 1))(head f))(t dump n(tail f))
+))))(token quote *))(flatten letrec(lambda(s c)(if(atom s)(cons s c)(cons
+open(flattentail s c))))(flattentail lambda(s c)(if(eq s(quote NIL))(cons
+close c)(if(atom s)(cons point(cons s(cons close c)))(flatten(head s)(flattentail
+(tail s)c)))))(open chr(quote 40))(point chr(quote 46))(close chr(quote
+41)))(pretty let(letrec(lambda(s)(p s(quote 0)))(p lambda(s x)(if(or(atom
+s)(leq(quote 0)(g s(sub linelength x))))s((if(n s)q' p')s(add x(quote 2
+)))))(g lambda(s x)(if(leq(quote 0)x)(if(atom s)(sub x(atomsize s))(g' s
+(sub x listsize)))noroom))(g' lambda(s x)(if(leq(quote 0)x)(if(eq s(quote
+NIL))x(if(atom s)(sub x(add dotsize(atomsize s)))(g'(tail s)(g(head s)x
+))))noroom))(p' lambda(s x)(cons(p(head s)x)(if(atom(tail s))(tail s)(p''
+(tail s)x))))(p'' lambda(s x)(i x(p' s x)))(q' lambda(s x)(cons(p(head s
+)x)(if(eq(tail(tail s))(quote NIL))(p''(tail s)(sub x(quote 2)))(q''(tail
+s)x))))(q'' lambda(s x)(i x(q' s x)))(i lambda(x s)(cons newline(i' x s
+)))(i' lambda(x s)(if(eq x(quote 0))s(cons space(i'(sub x(quote 1))s)))
+)(n lambda(s)(and(atom(head s))(unless(atom(tail s))(n'(head s)(tail s)
+))))(n' lambda(k s)(if(eq(tail s)(quote NIL))(unless(atom(head s))(eq(head
+(head s))k))(unless(atom(tail s))(n' k(tail s))))))(linelength quote 60
+)(atomsize lambda(s)(quote 4))(listsize quote 4)(dotsize quote 2)(noroom
+quote -1)))

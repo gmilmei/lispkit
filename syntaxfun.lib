@@ -1,0 +1,57 @@
+((syntax letrec(lambda(e)(check e(quote NIL)(quote NIL)))(check lambda(
+e n p)(letrec(let(if(atom e)(defined e n p)(if(eq keyword(quote quote))
+(list(quote 2)keyword e p)(if(member keyword monadic_ops)(operation(quote
+2)keyword e n p)(if(member keyword diadic_ops)(operation(quote 3)keyword
+e n p)(if(member keyword triadic_ops)(operation(quote 4)keyword e n p)(
+if(eq keyword(quote lambda))(checkfun keyword e n p)(if(member keyword(
+quote(let letrec)))(checkdef keyword e n p)(checklist e e n p))))))))(keyword
+head e))(defined lambda(e n p)(if(eq n(quote NIL))(error err_undef e e p
+)(if(member e(head n))(quote NIL)(defined e(tail n)p))))(list lambda(length
+keyword e p)(letrec(count length e)(count lambda(n l)(if(atom l)(if(eq l
+(quote NIL))(if(eq n(quote 0))(quote NIL)(has err_fewargs))(has err_arglist
+))(if(eq n(quote 0))(has err_manyargs)(count(sub n(quote 1))(tail l))))
+)(has lambda(n)(error n keyword e p))))(operation lambda(length keyword
+e n p)(provided(list length keyword e p)(checklist(tail e)e n p)))(checkdef
+lambda(keyword e n p)(letrec(if(atom(tail e))invalid(both(check body n'
+p)(checkdefs definitions(quote NIL)e(if(eq keyword(quote letrec))n' n)p
+)))(invalid error err_invform keyword e p)(body head(tail e))(definitions
+tail(tail e))(n' letrec(cons(definiends definitions)n)(definiends lambda
+(d)(if(atom d)(quote NIL)(if(unless(atom(head d))(atom(head(head d))))(
+cons(head(head d))(definiends(tail d)))(definiends(tail d))))))(checkdefs
+lambda(d l e n p)(if(atom d)(if(eq d(quote NIL))(quote NIL)invalid)(if(
+unless(atom(head d))(atom(head(head d))))(both(both(if(member(head(head
+d))l)(error err_deftwice(head(head d))e p)(quote NIL))(check(tail(head d
+))n(cons(head(head d))p)))(checkdefs(tail d)(cons(head(head d))l)e n p)
+)(both(error err_invdef(head d)e p)(checkdefs(tail d)l e n p)))))))(checkfun
+lambda(keyword e n p)(letrec(provided(list(quote 3)keyword e p)(both(formallist
+formals(quote NIL))(check body(cons(clean formals)n)p)))(body head(tail
+(tail e)))(formals head(tail e))(formallist lambda(f l)(if(atom f)(if(eq
+f(quote NIL))(quote NIL)(error err_formlist e e p))(if(atom(head f))(if
+(member(head f)l)(both(error err_deftwice(head f)e p)(formallist(tail f
+)l))(formallist(tail f)(cons(head f)l)))(both(error err_formarg(head f)
+e p)(formallist(tail f)l)))))(clean lambda(l)(if(atom l)(quote NIL)(if(
+atom(head l))(cons(head l)(clean(tail l)))(clean(tail l)))))))(checklist
+lambda(l e n p)(if(atom l)(if(eq l(quote NIL))(quote NIL)(error err_actllist
+l e p))(both(check(head l)n p)(checklist(tail l)e n p))))))(error lambda
+(n a e p)(cons(cons n(cons a(cons e(cons p(quote NIL)))))(quote NIL)))(
+provided lambda(a b)(if(eq a(quote NIL))b a))(both.append))(printerrors
+letrec(lambda(e)(append(quote(Syntax check))(if(eq e(quote NIL))(quote(
+revealed no errors))(printlist e))))(printlist lambda(l)(if(eq l(quote NIL
+))(quote NIL)(append(print(head l))(printlist(tail l)))))(print lambda(
+x)(let(if(eq n err_undef)(send(cons a(quote(used but not defined)))p)(if
+(eq n err_fewargs)(send(cons a(quote(has too few arguments)))(cons e p)
+)(if(eq n err_manyargs)(send(cons a(quote(has too many arguments)))(cons
+e p))(if(eq n err_arglist)(send(cons a(quote(has an incorrect argument list
+)))(cons e p))(if(eq n err_invform)(send(cons(quote incorrect)(cons a(quote
+(form))))(cons e p))(if(eq n err_invdef)(send(quote(incorrect form of definitions
+))(cons(dump(quote 2)a)p))(if(eq n err_deftwice)(send(cons a(quote(defined
+more than once)))(cons e p))(if(eq n err_formlist)(send(quote(incorrect
+formal argument list))(cons e p))(if(eq n err_formarg)(send(quote(incorrect
+formal argument))(cons e p))(if(eq n err_actllist)(send(quote(incorrect
+actual argument list))(cons e p))(send(append(quote(unexpected error number
+))(cons n(quote NIL)))p)))))))))))(n head x)(a head(tail x))(e dump(quote
+2)(head(tail(tail x))))(p head(tail(tail(tail x))))))(send lambda(m p)(
+cons newline(append m(append(list newline space space space space)(if(eq
+p(quote NIL))(quote(in the body of the program))(position p))))))(position
+lambda(p)(if(eq p(quote NIL))(quote NIL)(cons(quote in)(cons(head p)(position
+(tail p))))))))

@@ -1,0 +1,8 @@
+((emptyset quote NIL)(singleton lambda(e)(cons e(quote NIL)))(addelement
+lambda(e l)(if(member e l)l(cons e l)))(remelement lambda(e l)(if(atom l
+)(quote NIL)(if(eq e(head l))(tail l)(cons(head l)(remelement e(tail l)
+)))))(union lambda(a b)(if(atom a)b(if(member(head a)b)(union(tail a)b)
+(union(tail a)(cons(head a)b)))))(intersection lambda(a b)(if(atom a)(quote
+NIL)(if(member(head a)b)(cons(head a)(intersection(tail a)b))(intersection
+(tail a)b))))(difference lambda(a b)(if(atom a)(quote NIL)(if(member(head
+a)b)(difference(tail a)b)(cons(head a)(difference(tail a)b))))))

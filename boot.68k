@@ -1,0 +1,61 @@
+;       file SECD.BOOT.TEXT
+
+       .IF      stand_alone
+
+; This routine is not guaranteed to work satisfactorily on all configurations
+; of Sage two and four with all software configurations.   It is, however,
+; intended to give the most sensible achievable results on all configurations
+; found at the Programming Research Group
+
+length_of_boot .EQU     2. * block_length
+top_of_boot    .EQU     low_core + length_of_boot
+reloc_offset   .EQU     code_base - low_core
+
+       .IF      8000H & <~<<top_of_boot - *> + reloc_offset>>
+
+; make sufficient room for the bootstrap not to overlap this routine
+
+       .BLOCK   <top_of_boot - *> + reloc_offset
+
+       .ENDC
+
+reboot          ; executes the bootstrap program in the first two blocks of
+                ; the disk which contains a directory corresponding to the
+                ; boot volume name when the machine started, provided
+                ; that this program begins with the magic long word "BOOT"
+                ; This is assumed to be either floppy drive zero (#4) or
+                ; partition 0 of the winchester (#9)
+
+        ALLOC   d_length, A0            ; make room for a directory
+        LEA     boot_name, A2           ; find boot volume
+        BSR     find_directory          ; get volume number in D1, block in D2
+        RELEASE d_length
+        TST.L   D0                      ; if offline, then cannot boot
+        BNE     $99
+        ALLOC   io_length, A0
+        MOVE.W  D1, io_chan(A0)         ; select boot drive
+        MOVE.L  #length_of_boot, io_num_bytes(A0)
+        MOVE.L  #low_core, io_buffer(A0) ; set buffer to read into low core
+        MOVE.W  D2, io_block_low(A0)    ; select first two blocks of volume
+        SWAP    D2
+        MOVE.W  D2, io_block_high(A0)
+        CLR.W   io_control(A0)
+        BIOS    #read_data              ; read first block to A1
+        TST.W   io_result(A0)           ; if read error, then fail
+        BNE.S   $99
+        MOVE.L  $100, D0
+        CMP.L   low_core, D0
+        BNE.S   $99
+        BIOS    #init_bios_params       ; discard terminal interrupt routine
+        BIOS    #supervisor_mode
+        CLR.W   -(SP)                   ; floopy drive 0 / winchester drive 0
+        JSR     low_core + 4.           ; enter bootstrap
+        out_string 23., "Bootstrap terminated!: "
+    $99 out_string 17., "Failed to re-boot"
+        BIOS    #enter_debugger
+
+  $100 .ASCII   "BOOT"
+
+       .ENDC;   stand_alone
+
+;       file SECD.BOOT.TEXT

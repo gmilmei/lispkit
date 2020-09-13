@@ -1,0 +1,37 @@
+((up lambda(f s d)(if(eq s(quote NIL))(quote error)(state((head s)f)(tail
+s)d)))(top lambda(f s d)(if(eq s(quote NIL))(state f s d)(top((head s)f
+)(tail s)d)))(undelete lambda(f s d)(state d s f))(move lambda(n f s d)
+(letrec(m n f newcursor)(m lambda(n f' k)(if(atom f')(if(eq n(quote 1))
+(state f'(cons k s)d)(quote error))(if(eq n(quote 1))(state(head f')(cons
+(keeptail f' k)s)d)(m(sub n(quote 1))(tail f')(keephead f' k)))))))(after
+lambda(pattern template f s d)(letrec(a f newcursor)(a lambda(f' k)(let
+(if(atom f')(quote error)(if(eq env_head(quote error))(a(tail f')(keephead
+f' k))(state(k(cons(head f')(cons(template env_head)(tail f'))))s f)))(
+env_head pattern(head f'))))))(before lambda(pattern template f s d)(letrec
+(b f newcursor)(b lambda(f' k)(let(if(atom f')(if(eq env_all(quote error
+))(quote error)(state(k(cons(template env_all)f'))s f))(if(eq env_head(
+quote error))(b(tail f')(keephead f' k))(state(k(cons(template env_head
+)f'))s f)))(env_all pattern f')(env_head pattern(head f'))))))(change lambda
+(pattern template f s d)(let(if(eq env_all(quote error))(quote error)(state
+(template env_all)s f))(env_all pattern f)))(delete lambda(pattern f s d
+)(letrec(e f newcursor)(e lambda(f' k)(if(atom f')(if(eq(pattern f')(quote
+error))(quote error)(state(k(quote NIL))s f))(if(eq(pattern(head f'))(quote
+error))(e(tail f')(keephead f' k))(state(k(tail f'))s f))))))(delete1 lambda
+(f s d)(if(atom f)(quote error)(state(tail f)s f)))(exchange lambda(pattern
+template f s d)(letrec(e f newcursor)(e lambda(f' k)(let(if(atom f')(if
+(eq env_all(quote error))(quote error)(state(k(template env_all))s f))(
+if(eq env_head(quote error))(e(tail f')(keephead f' k))(state(k(cons(template
+env_head)(tail f')))s f)))(env_all pattern f')(env_head pattern(head f'
+))))))(find lambda(pattern f s d)(letrec(g f newcursor s)(g lambda(f' k
+s')(let(if(eq across(quote error))down across)(across g' f' k s')(down g''
+f' k s')))(g' lambda(f' k s')(if(atom f')(if(eq(pattern f')(quote error
+))(quote error)(state f'(cons k s')d))(if(eq(pattern(head f'))(quote error
+))(g'(tail f')(keephead f' k)s')(state(head f')(cons(keeptail f' k)s')d
+))))(g'' lambda(f' k s')(let(if(atom f')(quote error)(if(eq component(quote
+error))(g''(tail f')(keephead f' k)s')component))(component g(head f')newcursor
+(cons(keeptail f' k)s'))))))(global lambda(pattern template f s d)(letrec
+(state(g f)s f)(g lambda(f')(let(if(eq env_all(quote error))(if(atom f'
+)f'(cons(if(eq env_head(quote error))(g(head f'))(template(g' env_head)
+))(g(tail f'))))(template(g' env_all)))(env_all pattern f')(env_head pattern
+(head f'))))(g' lambda(env)(lambda(a)(g(env a))))))(replace lambda(template
+f s d)(state template s f)))

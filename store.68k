@@ -1,0 +1,239 @@
+;       file SECD.STORE.TEXT
+
+alloc_rt        ; called with the standard SECD machine registers, allocates
+                ; a free cell in new_cell
+
+       .IF      compact_cons            ; if small code, then first do scan
+;   $00 ADDQ.L  #cell_size, new_cell
+    $00 ADDQ.L  #cell_size, A6
+;       CMPA.L  top_address, new_cell
+        CMPA.L  top_address, A6
+        BHI.S   $10
+;       IF_busy_clear_mark (new_cell), $00
+        IF_busy_clear_mark (A6), $00
+        RTS                             ; return a value from alloc_rt
+    $10.ENDC; compact_cons
+
+       .IF gc_count
+
+        SAVE    D1
+        MOVE.L  top_address, D1
+        SUB.L   store_base, D1
+        LSR.L   #log_cell_size, D1      ; divide 32 bits by cell_size
+
+        SAVE    D0
+        out_string 0
+       .BYTE    11., CR, LF
+       .ASCII   "Total of "
+       .ALIGN   2.
+        MOVE.L  D1, D0
+        out_number
+        out_string 8., " cells, "
+        RESTORE D0
+
+       .ENDC; gc_count
+
+        set_led on                      ; signal beginning of mark phase
+
+       .IF recursive                    ; code for recursive mark
+
+        PUSH_L  store_base              ; an address not on the heap!
+;       PUSH_ML S_reg/E_reg/C_reg/D_reg/W_reg
+        PUSH_ML A1/A2/A4/A5/W_reg
+       .IF ~gc_symbols
+        PUSH_L  symbol_table
+       .ENDC; gc_symbols
+    $20 POPA_L  A6
+        CMPA.L  store_base, A6
+        BEQ.S   $40
+    $30 IF_busy_set_mark (A6), $20
+       .IF gc_count
+        SUBQ.L  #1., D1                 ; count one for this cell
+       .ENDC; gc_count
+        IF_gc_atom (A6), $20
+        PUSH_L  tail(A6)
+        MOVEA.L (A6), A6
+        BRA.S   $30
+    $40
+       .ENDC; recursive                 ; end of code for recursive mark
+
+       .IF ~recursive                   ; code for non-recursive mark
+
+        SAVE    D0/A0-A1                ; save registers across mark
+        PUSH_L  store_base              ; mark stack with a non-heap address
+;       PUSH_ML S_reg/E_reg/C_reg/D_reg
+        PUSH_ML A1/A2/A4/A5
+       .IF      ~gc_symbols
+        PUSH_L  symbol_table
+       .ENDC;   ~gc_symbols
+        MOVEA.L NIL, A0                 ; u := NIL
+        MOVEA.L W_reg, A6               ; v := first tree to be marked
+    $20 IF_busy_set_mark (A6), $70      ; if v is marked -> done
+       .IF gc_count
+        SUBQ.L  #1., D1                 ; count one for the cell itself
+       .ENDC; gc_count
+        IF_gc_atom (A6), $70            ; if v is an atom -> done
+    $30 MOVE.B  (A6), D0                ; D0 := type byte of v
+        MOVEA.L (A6), A1                ; t := v.head
+        IF_busy_set_mark (A1), $50      ; if v.head was marked -> head done
+       .IF gc_count
+        SUBQ.L  #1., D1                 ; count one for the head of v
+       .ENDC; gc_count
+        IF_gc_atom (A1), $50            ; if v.head is an atom -> head done
+        clear_count D0
+        MOVE.L  A0, (A6)                ; v.head := u
+        MOVE.B  D0, (A6)
+        MOVEA.L A6, A0                  ; u := v
+        MOVEA.L A1, A6                  ; v := t ( = v.head )
+        BRA.S   $30                     ;       -> mark
+    $40 MOVEA.L (A0), A1                ; t := u.head
+        MOVE.B  (A0), D0
+        MOVE.L  A6, (A0)                ; u.head := v
+        MOVE.B  D0, (A0)
+        MOVEA.L A0, A6                  ; v := u
+        MOVEA.L A1, A0                  ; u := t ( = u.head )
+    $50 MOVEA.L tail(A6), A1            ; t := v.tail
+        IF_busy_set_mark (A1), $70      ; if v.tail was marked -> tail done
+       .IF gc_count
+        SUBQ.L  #1., D1                 ; count one for the tail of v
+       .ENDC; gc_count
+        IF_gc_atom (A1), $70            ; if v.tail is an atom -> tail done
+        set_count (A6)
+        MOVE.L  A0, tail(A6)            ; v.tail := u
+        MOVEA.L A6, A0                  ; u := v
+        MOVEA.L A1, A6                  ; v := t ( = v.tail )
+        BRA.S   $30                     ;       -> mark
+    $60 MOVEA.L tail(A0), A1            ; t := u.tail
+        MOVE.L  A6, tail(A0)            ; u.tail := v
+        MOVEA.L A0, A6                  ; v := u
+        MOVEA.L A1, A0                  ; u := t ( = u.tail )
+    $70 MOVE.L  A0, D0                  ; if u
+        EOR.L   NIL, D0                 ;      = NIL
+;       ANDI.L  #00FFFFFFH, D0          ;            up to 24 bits
+       .WORD 0280H, 00FFH, 0FFFFH
+        BEQ.S   $80                     ; -> done
+        IF_count (A0), $40, $60
+    $80 POPA_L  A6                      ; v := next independent tree
+        CMPA.L  store_base, A6
+        BNE     $20
+        RESTORE D0/A0-A1                ; restore registers
+
+       .ENDC; ~recursive                ; end of code for non-recursive mark
+
+       .IF gc_symbols
+        SAVE    D0/A0-A2/A4             ; prune symbol table
+        MOVEA.L symbol_table, A0
+    $05 MOVEA.L (A0), A2                ; while ~ marked(val(hd symbol_table))
+        MOVEA.L val(A2), A4
+        IF_is_marked (A4), $15
+        MOVEA.L tail(A0), A0            ; do symbol_table := tl symbol_table
+        BRA.S   $05
+    $15 LEA     symbol_table, A1
+        MOVE.L  A0, (A1)
+    $25 set_marked (A0)                 ;       mark(symbol_table)
+        set_marked (A2)                 ;       mark(hd symbol_table)
+        MOVEA.L tail(A0), A1
+    $35 MOVE.L  A1, D0                  ; i := symbol_table
+        EOR.L   NIL, D0
+;       ANDI.L  #00FFFFFFH, D0
+       .WORD 0280H, 00FFH, 0FFFFH
+        BEQ.S   $55                     ; while tl(i) <> NIL do
+        MOVEA.L (A1), A2                ;     if ~ marked(val(hd(tl i)))
+        MOVEA.L val(A2), A4
+        IF_is_marked (A4), $45
+        MOVEA.L tail(A1), A1            ; then tl i := tl tl i
+        set_tail A0, A1
+        BRA.S   $35   
+    $45 MOVEA.L tail(A0), A0            ; else i := tl i
+        BRA.S   $25                     ;      mark(i); mark(hd i)
+    $55 RESTORE D0/A0-A2/A4
+       .ENDC; gc_symbols
+                                                                  
+        set_led off
+
+       .IF gc_count
+
+        SAVE    D0
+        MOVE.L  D1, D0
+        out_number
+        out_string 6., " free "
+        RESTORE D0
+        RESTORE D1
+
+       .ENDC; gc_count
+
+;   $90 ADDQ.L  #cell_size, new_cell    ; start scan of newly marked store
+    $90 ADDQ.L  #cell_size, A6
+;       CMPA.L  top_address, new_cell
+        CMPA.L  top_address, A6
+        BHI.S   $99
+;       IF_busy_clear_mark (new_cell), $90
+        IF_busy_clear_mark (A6), $90
+        RTS                             ; return a value from alloc_rt
+
+    $99 EXIT    #rc_cell_store_full     ; if no luck, then store full
+
+store_token     ; called with the standard SECD machine registers, and with
+                ; the representation of a new token in W_reg, checks that symbol
+                ; against the symbol table, and enters it if necessary.
+                ; Returns with a cell representing the symbol in the W
+                ; register, and the constant atomic in D0.
+
+        SAVE    D1/A0-A2/A4
+        MOVEA.L W_reg, A0
+        IF_is_composite (A0), $00
+        MOVEA.L NIL, A0                 ; if IsNill(T) then T := NIL
+        MOVE.L  NIL, W_reg
+        BRA.S   $10
+                                        ; Tj := T
+    $00 MOVEA.L A0, A1
+        MOVEA.L tail(A1), A0            ; while not IsNill(tail Tj) do
+        IF_is_composite (A0), $00       ;               Tj := tail Tj
+        set_tail A1, NIL
+    $10 MOVEA.L symbol_table, A2        ; Si := symbol table
+    $20                                 ; while Si <> NIL do
+        MOVEA.L W_reg, A0               ; begin Tj := T
+        MOVEA.L (A2), A4
+        MOVEA.L val(A4), A4             ;    Sij := val head Si
+    $30 CMP.L   A0, NIL                 ;    while Tj <> NIL
+        BEQ.S   $50
+        CMP.L   A4, NIL                 ;     and Sij <> NIL
+        BEQ.S   $50
+        MOVE.L  (A0), D0                ;     do if hd Tj = hd Sij
+        MOVE.L  (A4), D1
+        EOR.L   D1, D0
+;       ANDI.L  #00FFFFFFH, D0
+       .WORD 0280H, 00FFH, 0FFFFH
+        BEQ.S   $40                     ;        or val(hd Tj) = val(hd Sij)
+        MOVEA.L (A0), A1
+        MOVE.L  val(A1), D0
+        MOVEA.L (A4), A1
+        CMP.L   val(A1), D0
+        BNE.S   $60
+        MOVE.L  A1, D0                  ; (in which case hd Tj := hd Sij)
+        update_head A0, D0
+    $40 MOVEA.L tail(A0), A0            ;        then Tj := tl Tj
+        MOVEA.L tail(A4), A4            ;             Sij := tl Sij
+        BRA.S   $30
+    $50 CMPA.L  A0, A4                  ; characters are same,
+        BNE.S   $60                     ; if Tj = Sij (= NIL) then same length
+        MOVE.L  (A2), W_reg             ; result is hd Si
+        RESTORE D1/A0-A2/A4
+        BRA.S   $90
+    $60 MOVEA.L tail(A2), A2            ; characters differ, Si := tl Si
+        CMP.L   A2, NIL                 ;   (test Si = NIL)
+        BNE.S   $20                     ; end
+        RESTORE D1/A0-A2/A4             ; however, if not found, then
+        symb    W_reg                   ; make new symbol
+;       MOVE.L  new_cell, W_reg         ; resultis new symbol
+        MOVE.L  A6, W_reg
+        cons    W_reg, symbol_table     ; SymbolTable := cons(W, SymbolTable)
+        SAVE    A0
+        LEA     symbol_table, A0
+;       MOVE.L  new_cell, (A0)
+        MOVE.L  A6, (A0)
+        RESTORE A0
+    $90 MOVEQ   #atomic, D0
+        RTS                             ; return from store_token
+
+;       end of file SECD.STORE.TEXT

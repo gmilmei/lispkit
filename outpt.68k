@@ -1,0 +1,166 @@
+;       file SECD.OUTPT.TEXT
+
+put_char_rt     ; outputs character in low byte of D2 to the output stream
+                ; in A1
+
+       .MACRO   put_char
+       .IF      D2 <> %1
+        MOVE.B  #%1, D2
+       .ENDC
+        BSR     put_char_rt
+       .ENDM;   put_char
+
+       .MACRO   put_buffer
+        MOVEQ   #%1, D0
+        MOVEA.L out_put_buffer(A1), A0
+        JSR     (A0)
+       .ENDM;   put_buffer              
+
+        SAVE    A0/D0/D2-D3
+    $00 MOVE.W  out_writer(A1), D3
+        CMP.W   out_length(A1), D3
+        BNE.S   $10
+        put_buffer pb_full_buffer       ; call because no room in buffer
+        BRA.S   $00
+    $10 ADDQ.W  #1., D3
+        MOVE.W  D3, out_writer(A1)
+        MOVE.B  D2, out_data(A1, D3.W)
+        CMP.B   #CR, D2
+        BNE.S   $20
+        put_buffer pb_full_buffer       ; call to send newline to serial line
+    $20 RESTORE A0/D0/D2-D3
+        RTS                             ; return from put_char
+
+put_token       ; outputs a token, pointed at by A0, to the current output
+                ; channel, breaking the line when the token will not fit
+
+        SAVE    D0/D2/A0-A2
+        LEA     out_buffer, A1
+    $00 IF_is_atom (A0), $10            ; while A0 <> NIL do
+        MOVEA.L (A0), A2
+        MOVE.L  val(A2), D2
+        put_char D2                     ;    begin put( val( hd A0 ) )
+        MOVEA.L tail(A0), A0            ;          A0 := tl A0
+        BRA.S   $00                     ;    end
+    $10 put_char space                  ; put( " " )
+        put_buffer pb_full_buffer
+        RESTORE D0/D2/A0-A2
+        RTS                             ; return from put_token
+
+put_number      ; outputs the numeral in D0 to the current output channel
+
+        SAVE    D0/D2-D3/A0-A1          ; write digits
+        LEA     out_buffer, A1
+        TST.L   D0
+        BPL.S   $10                     ; if D0 < 0 then
+        put_char "-"
+        NEG.L   D0                      ; and take absolute value
+    $10 BSR.S   $20                     ; print positive
+        put_char space
+        put_buffer pb_full_buffer
+        RESTORE D0/D2-D3/A0-A1
+        RTS                             ; return from put_number
+
+    $20                         ; unfold positive D0, corrupts D0-D3
+        MOVE.L  D0, D3                  ; ax + b, say
+        CLR.W   D0
+        SWAP    D0                      ; D0 = a
+        DIVU    #10., D0                ; D0 := (a rem 10)x + (a div 10)
+        MOVE.L  D0, D2
+        MOVE.W  D3, D2                  ; D2 := (a rem 10)x + b
+        DIVU    #10., D2                ; D2 := ((ax+b) rem 10)x
+                                        ;     + ((a rem 10)x +b) div 10)
+        SWAP    D0
+        MOVE.W  D2, D0                  ; D0 := (ax + b) div 10
+        SWAP    D2                      ; D2.low_byte = (ax + b) rem 10
+        ADD.B   #"0", D2
+        TST.L   D0                      ; if (ax + b) > 9
+        BEQ.S   $25
+        PUSH_W  D2
+        BSR.S   $20                     ; then unfold (ax + b) div 10
+        POP_W   D2
+    $25 put_char D2
+        RTS                             ; return from $20 in put_number
+
+put_exp         ; sends the s-expression pointed at by A0, to the standard
+                ; output channel
+
+        SAVE    D0-D1/A0-A1
+        MOVE.L  <val+nil_cell>, D1
+        MOVEA.L A0, A1
+        BSR.S   $00
+        RESTORE D0-D1/A0-A1
+        RTS                             ; return from put_exp
+
+    $00 ; put_exp A1, but corrupting D0/A0-A1, and assuming D1 = val(nil_cell)
+
+        MOVE.B  (A1), D0                ; get type of A1
+        ANDI.B  #type_mask, D0          ; mask to type bits
+        CMP.B   #cons_type, D0
+        BEQ.S   $10                     ; if cons
+        CMP.B   #recipe_type, D0
+        BEQ.S   $20
+        CMP.B   #numb_type, D0
+        BEQ.S   $30
+        CMP.B   #symb_type, D0
+        BEQ.S   $40
+        EXIT    #rc_error
+
+    $10 ; put_exp of a cons
+
+        LEA     open_symbol, A0         ; put token "("
+        BSR     put_token
+    $12 PUSH_L  A1
+        head_pop A1
+        BSR     $00                     ; put exp (head A1)
+        POPA_L  A1
+        tail_pop A1
+        MOVE.B  (A1), D0
+        ANDI.B  #type_mask, D0          ; get type of tail
+        CMP.B   #cons_type, D0
+        BEQ.S   $12                     ; if another cons, then loop
+        CMP.B   #symb_type, D0
+        BNE.S   $15                     ; if not symbol, then not NIL
+        MOVE.L  val(A1), D0
+        EOR.L   D1,D0
+;       ANDI.L  #00FFFFFFH, D0
+       .WORD 0280H, 00FFH, 0FFFFH
+        BEQ.S   $17                     ; if NIL, then don't print it
+    $15 LEA     point_symbol, A0        ; put token "."
+        BSR     put_token
+        BSR     $00                     ; put out atom in tail
+    $17 LEA     close_symbol, A0        ; put token ")"
+        BRA     put_token
+                                        ; and return from put_exp
+
+    $20 ; put_exp of a recipe
+
+        LEA     recipe_symbol, A0       ; put token "*RECIPE*"
+        BRA     put_token
+                                        ; and return from put_exp
+
+    $30 ; put_exp of a number
+
+        MOVE.L  val(A1), D0             ; get ival
+        BRA     put_number              ; and output it
+                                        ; and return from put_exp
+
+    $40 ; put_exp of a symbol
+
+        MOVEA.L val(A1), A0             ; get sval of A0
+        BRA     put_token               ; output it as a symbol
+                                        ; and return from call of put_exp
+                                        
+close_output    ; closes the output stream in A1
+
+        SAVE    D0/A0-A1
+        MOVEQ   #pb_close_file, D0      ; close currently open file
+        LEA     out_buffer, A1
+        MOVEA.L out_put_buffer(A1), A0
+        JSR     (A0)
+        LEA     put_new_file, A0        ; and set up to open new file
+        MOVE.L  A0, out_put_buffer(A1)
+        RESTORE D0/A0-A1
+        RTS                             ; return from close_output
+
+;       end of file SECD.OUTPT.TEXT

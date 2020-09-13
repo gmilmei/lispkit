@@ -1,0 +1,5 @@
+((1 lambda(t)(head t))(2 lambda(t)(head(tail t)))(3 lambda(t)(head(tail
+(tail t))))(4 lambda(t)(head(tail(tail(tail t)))))(5 lambda(t)(head(tail
+(tail(tail(tail t))))))(6 lambda(t)(head(tail(tail(tail(tail(tail t))))
+)))(el lambda(n t)(if(eq n(quote 1))(head t)(el(sub n(quote 1))(tail t)
+))))

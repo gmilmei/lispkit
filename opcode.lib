@@ -1,0 +1,8 @@
+((LD_code quote 1)(LDC_code quote 2)(LDF_code quote 3)(AP_code quote 4)
+(RTN_code quote 5)(RTN_seq quote(5))(DUM_code quote 6)(RAP_code quote 7
+)(SEL_code quote 8)(JOIN_code quote 9)(JOIN_seq quote(9))(HEAD_code quote
+10)(TAIL_code quote 11)(ATOM_code quote 12)(CONS_code quote 13)(EQ_code
+quote 14)(ADD_code quote 15)(SUB_code quote 16)(MUL_code quote 17)(DIV_code
+quote 18)(REM_code quote 19)(LEQ_code quote 20)(STOP_code quote 21)(STOP_seq
+quote(21))(LDE_code quote 22)(UPD_code quote 23)(UPD_seq quote(23))(AP0_code
+quote 24)(READ_code quote 25)(PRINT_code quote 26))

@@ -1,0 +1,221 @@
+;       file SECD.DATA.TEXT
+
+;       fixed unit table
+
+unit_table             .EQU <*-unit_stride>
+        unit_entry  7., "CONSOLE", term_in_channel, term_out_channel
+printer_unit
+        unit_entry  7., "PRINTER", 0.,              0.
+        unit_entry  5., "REMIN",   rem_in_channel,  0.
+        unit_entry  6., "REMOUT",  0.,              rem_out_channel
+        unit_entry  6., "REMOTE",  rem_in_channel,  rem_out_channel
+unit_top
+
+;       io error messages
+
+io_m01  STRING 32., "Floppy controller not responding"
+io_m02  STRING 36., "Invalid command to floppy controller"
+io_m03  STRING 27., "Recalibrate or Seek failure"
+io_m04  STRING 18., "No floppy in drive"
+io_m05  STRING 20., "Missing address mark"
+io_m06  STRING 34., "No data found by floppy controller"
+io_m07  STRING 37., "Overrun report from floppy controller"
+io_m08  STRING  9., "CRC error"
+io_m09  STRING 15., "End of cylinder"
+io_m10  STRING 29., "Write to write protected disk"
+io_m11  STRING 38., "Floppy controller address out of range"
+io_m12  STRING 14., "Wrong cylinder"
+io_m14  STRING 21., "Illegal device number"
+io_m15  STRING 20., "Illegal BIOS request"
+io_m16  STRING 17., "Invalid file name"                    ; io_res_fn_inv
+io_m17  STRING 36., "Input is not possible from this file" ; io_res_in_inv
+io_m18  STRING 35., "Output is not possible to this file"  ; io_res_out_inv
+io_m19  STRING 31., "There is no such volume on-line"      ; io_res_no_vol
+io_m20  STRING 29., "There is no such file on-line"        ; io_res_no_file
+io_m21  STRING 29., "There is no room for the file"        ; io_res_no_room
+io_m22  STRING 34., "There is no room for the directory"   ; io_res_dov
+io_m23  STRING 34., "Cannot find temporary file heading"   ; io_res_lost_file
+
+  $200  STRING 20., "Unexpected i/o error"
+
+       .ALIGN   2.
+        label   $200 
+        label io_m23 
+        label io_m22 
+        label io_m21 
+        label io_m20 
+        label io_m19 
+        label io_m18 
+        label io_m17 
+        label io_m16 
+        label io_m15 
+        label io_m14 
+        label   $200 
+        label io_m12 
+        label io_m11 
+        label io_m10 
+        label io_m09 
+        label io_m08 
+        label io_m07 
+        label io_m06 
+        label io_m05 
+        label io_m04 
+        label io_m03 
+        label io_m02 
+        label io_m01
+io_res_messages
+       .WORD io_res_min - 1.
+
+;       termination messages
+
+rc_m01  STRING 32., "SECD machine terminated normally"     ; rc_ok
+rc_m02  STRING 26., "ERROR: cell store overflow"           ; rc_cell_store_full
+rc_m03  STRING 32., "ERROR: attempt to divide by zero"     ; rc_divide_zero
+rc_m04  STRING 31., "ERROR: invalid SECD instruction"      ; rc_invalid_inst
+rc_m05  STRING 37., "ERROR: unspecified SECD machine error"; rc_error
+
+       .IF      stand_alone
+rc_m06  STRING 24., "SECD machine interrupted"             ; rc_break
+       .ELSE
+rc_m06  STRING 32., "This program requires a RAM disk"     ; rc_no_ram_disk
+       .ENDC
+
+  $200  STRING 36., "ERROR: unexpected SECD machine error"
+
+       .ALIGN 2.
+        label   $200
+        label rc_m06
+        label rc_m05
+        label rc_m04
+        label rc_m03
+        label rc_m02
+        label rc_m01
+rc_mess_table
+       .WORD rc_min - 1.
+
+;       terminal configuration tables
+
+       .IF      stand_alone
+
+term_special_chars
+               .BYTE    NULL                    ; flush char
+term_no_break_byte                              ; bit 6 is no break flag
+               .BYTE    0.                      ; also used as filler byte
+               .BYTE    control&"S", control&"B"; stop & break chars
+               .BLOCK   7.
+               .BYTE    7FH                     ; keyboard mask
+
+       .ENDC;   stand_alone
+
+;       declaration of variables
+
+first_variable .EQU     *
+
+prefix_id      .BLOCK <1.+vid_len>              ; default prefix for file name
+
+               .ALIGN   2.
+boot_name      .WORD    2.                      ; name of default input file
+                                                ; includes:-
+system_id      .BLOCK   fn_stride               ;    UCSD substitution for "*"
+                STRING  9., "SECD.BOOT"
+
+               .ALIGN   2.
+store_base     .BLOCK   4.                      ; bottom of heap
+symbol_table   .BLOCK   4.                      ; chain of internalised symbols
+save_stack     .BLOCK   4.                      ; stack mark for long jumps
+
+               .BLOCK   in_file_length          ; input file
+               .ALIGN   2.
+in_buffer      .BLOCK   in_extra + block_length ; and its buffer
+in_char        .BYTE    " "                     ; and put back character
+                                                                        
+               .BLOCK   out_file_length         ; output file
+               .ALIGN   2.
+out_buffer     .BLOCK   out_extra + block_length ; and its buffer
+
+               .ALIGN   2.
+
+;       constant parts of what would otherwise be the heap
+;       these cell need only be writable for initialisation,
+;       and for the setting of the mark bit by the gc
+
+;       character constants
+
+k_numb_C        numb_constant "C"
+k_numb_E        numb_constant "E"
+k_numb_F        numb_constant "F"
+k_numb_I        numb_constant "I"
+k_numb_L        numb_constant "L"
+k_numb_N        numb_constant "N"
+k_numb_P        numb_constant "P"
+k_numb_R        numb_constant "R"
+k_numb_T        numb_constant "T"
+k_numb_space    numb_constant " "
+k_numb_open     numb_constant "("
+k_numb_point    numb_constant "."
+k_numb_close    numb_constant ")"
+plus_numb
+k_numb_plus     numb_constant "+"
+minus_numb
+k_numb_minus    numb_constant "-"
+k_numb_star     numb_constant "*"
+
+;       the constant part of the symbol table chain
+
+k_s_NIL         cons_constant
+k_s_T           cons_constant
+k_s_F           cons_constant
+k_s_open        cons_constant
+k_s_point       cons_constant
+k_s_close       cons_constant
+
+;       the constant symbols in the symbol table chain
+
+nil_cell
+k_NIL           symb_constant
+k_NIL_1         cons_constant
+k_NIL_2         cons_constant
+k_NIL_3         cons_constant
+t_cell
+k_T             symb_constant
+k_T_1           cons_constant
+f_cell
+k_F             symb_constant
+k_F_1           cons_constant
+k_open          symb_constant
+open_symbol
+k_open_1        cons_constant
+point_cell
+k_point         symb_constant
+point_symbol
+k_point_1       cons_constant
+close_cell
+k_close         symb_constant
+close_symbol
+k_close_1       cons_constant
+
+;       a string, kept here for convenience
+
+recipe_symbol
+k_RECIPE_1      cons_constant
+k_RECIPE_2      cons_constant
+k_RECIPE_3      cons_constant
+k_RECIPE_4      cons_constant
+k_RECIPE_5      cons_constant
+k_RECIPE_6      cons_constant
+k_RECIPE_7      cons_constant
+k_RECIPE_8      cons_constant
+k_RECIPE_9      cons_constant
+k_RECIPE_A      cons_constant
+k_RECIPE_B      cons_constant
+k_RECIPE_C      cons_constant
+
+last_variable  .EQU      *
+
+       .IF      stand_alone
+
+top_of_stack    OFF_EVEN last_variable, stack_length
+
+       .ENDC;   stand_alone
+
+;       end of file SECD.DATA.TEXT

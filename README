@@ -1,0 +1,63 @@
+LispKit system distribution `tape'
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This directory contains the software described in `The LispKit Manual', 
+Programming Research Group technical monograph PRG-32 (1983).  It is
+(as far as I can determine after all these years) a copy of the tape 
+described in the `Digital Equipment VAX machines' section at the back
+of the manual.
+
+LispKit is an implementation of a very small pure-functional language
+with a LISP-like syntax.  It is described in the textbook
+
+	Peter Henderson,
+	`Functional Programming -- Application and Implementation',
+	Prentice Hall International, 1980
+
+and in more detail in
+
+	Peter Henderson, Geraint Jones, Simon Jones,
+	`The LispKit Manual',
+	Programming Research Group technical monograph PRG-32 (2 vols),
+	Oxford University Computing Laboratory, 1983.
+		
+
+Contents of the tape
+~~~~~~~~~~~~~~~~~~~~
+
+        The files on the tape are essentially as described in the 
+LispKit manual, in the section about VAX tapes:
+
+        <name>.LSO, <name>.LOB, <name>.CLS, <name>.LIB
+
+                these files contain the sources and codes of LispKit programs
+
+        <name>.PAS, <name>.MAR
+
+                these files contain the Pascal and Macro-11 sources for the
+                virtual machines that run on the VAX
+
+        <name>.COM
+
+                are VAX DCL (job control) files included for guidance
+
+        <name>.TXT
+
+                these files are for reading - they include this one, and
+                the sources of the reference machine, and of various
+                machine specific input/output parts, included for the 
+                guidance of anyone who wants to reimplement the system
+
+        <name>.68k
+
+                if these files occur on your tape, then they contain
+                the source of a M68000 implementation of the virtual 
+                machine - more details in README68k.TXT
+
+
+                                Geraint Jones
+                                        Oxford University Computing Laboratory
+					Wolfson Building
+					Parks Road
+                                        Oxford                OX1 3QD
+					England

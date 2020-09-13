@@ -1,0 +1,50 @@
+((comp lambda(e n c)(if(atom e)(cons LD_code(cons(location e n)(cons AP0_code
+c)))(if(eq(head e)(quote quote))(cons LDC_code(cons(head(tail e))c))(if
+(eq(head e)(quote add))(comp(head(tail e))n(comp(head(tail(tail e)))n(cons
+ADD_code c)))(if(eq(head e)(quote sub))(comp(head(tail e))n(comp(head(tail
+(tail e)))n(cons SUB_code c)))(if(eq(head e)(quote mul))(comp(head(tail
+e))n(comp(head(tail(tail e)))n(cons MUL_code c)))(if(eq(head e)(quote div
+))(comp(head(tail e))n(comp(head(tail(tail e)))n(cons DIV_code c)))(if(
+eq(head e)(quote rem))(comp(head(tail e))n(comp(head(tail(tail e)))n(cons
+REM_code c)))(if(eq(head e)(quote leq))(comp(head(tail e))n(comp(head(tail
+(tail e)))n(cons LEQ_code c)))(if(eq(head e)(quote eq))(comp(head(tail e
+))n(comp(head(tail(tail e)))n(cons EQ_code c)))(if(eq(head e)(quote head
+))(comp(head(tail e))n(cons HEAD_code(cons AP0_code c)))(if(eq(head e)(
+quote tail))(comp(head(tail e))n(cons TAIL_code(cons AP0_code c)))(if(eq
+(head e)(quote atom))(comp(head(tail e))n(cons ATOM_code c))(if(eq(head
+e)(quote cons))(complazy(head(tail(tail e)))n(complazy(head(tail e))n(cons
+CONS_code c)))(if(eq(head e)(quote if))(let(comp(head(tail e))n(cons SEL_code
+(cons thenpart(cons elsepart c))))(thenpart comp(head(tail(tail e)))n JOIN_seq
+)(elsepart comp(head(tail(tail(tail e))))n JOIN_seq))(if(eq(head e)(quote
+lambda))(let(cons LDF_code(cons body c))(body comp(head(tail(tail e)))(
+cons(head(tail e))n)RTN_seq))(if(eq(head e)(quote let))(let(let(complist
+args n(cons LDF_code(cons body(cons AP_code c))))(body comp(head(tail e
+))m RTN_seq))(m cons(domain(tail(tail e)))n)(args exprs(tail(tail e))))
+(if(eq(head e)(quote letrec))(let(let(cons DUM_code(complist args m(cons
+LDF_code(cons body(cons RAP_code c)))))(body comp(head(tail e))m RTN_seq
+))(m cons(domain(tail(tail e)))n)(args exprs(tail(tail e))))(complist(tail
+e)n(comp(head e)n(cons AP_code c)))))))))))))))))))))(complist lambda(e
+n c)(if(eq e(quote NIL))(cons LDC_code(cons(quote NIL)c))(complist(tail
+e)n(complazy(head e)n(cons CONS_code c)))))(complazy lambda(e n c)(cons
+LDE_code(cons(comp e n UPD_seq)c)))(location lambda(e n)(letrec(if(member
+e(head n))(cons(quote 0)(posn e(head n)))(inchead(location e(tail n))))
+(posn lambda(e n)(if(eq e(head n))(quote 0)(add(quote 1)(posn e(tail n)
+))))(inchead lambda(l)(cons(add(quote 1)(head l))(tail l)))))(exprs lambda
+(d)(if(eq d(quote NIL))(quote NIL)(cons(tail(head d))(exprs(tail d)))))
+(freevars lambda(e)(if(atom e)(singleton e)(if(eq(head e)(quote quote))
+emptyset(if(eq(head e)(quote lambda))(let(difference(freevars body)arguments
+)(body head(tail(tail e)))(arguments head(tail e)))(if(eq(head e)(quote
+let))(let(reduce union(map(lambda(d)(freevars(tail d)))definitions)(difference
+(freevars body)(domain definitions)))(body head(tail e))(definitions tail
+(tail e)))(if(eq(head e)(quote letrec))(let(difference(reduce union(map
+(lambda(d)(freevars(tail d)))definitions)(freevars body))(domain definitions
+))(body head(tail e))(definitions tail(tail e)))(reduce union(map freevars
+(if(member(head e)operators)(tail e)e))emptyset)))))))(structure let(lambda
+(e)(if(or(atom e)(eq(head e)(quote quote)))token(if(or(eq(head e)(quote
+letrec))(eq(head e)(quote let)))(cons(head e)(cons(structure(head(tail e
+)))(map(lambda(d)(cons(head d)(structure(tail d))))(tail(tail e)))))(if
+(eq(head e)(quote lambda))(list(head e)(head(tail e))(structure(head(tail
+(tail e)))))(reduce(lambda(h t)(if(and(atom h)(atom t))token(cons h t))
+)(map structure e)(quote NIL))))))(token quote *))(operators append monadic_ops
+(append diadic_ops triadic_ops))(monadic_ops quote(head tail atom))(diadic_ops
+quote(add sub mul div rem leq eq cons))(triadic_ops quote(if)))

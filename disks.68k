@@ -1,0 +1,263 @@
+;      file SECD.DISKS.TEXT
+
+read_block      ; reads the next block specified by the extra fields of
+                ; the input buffer in A1, returning the io_result in D0
+                ; low word
+
+        SAVE    A0
+        ALLOC   io_length, A0           ; allocate a disk i/o block
+        MOVE_BW in_channel(A1), D0
+        MOVE.W  D0, io_chan(A0)
+        MOVE.L  #block_length, io_num_bytes(A0)
+        PEA     <in_data+1.>(A1)        ; buffer data area
+        POP_L   io_buffer(A0)
+        MOVE.L  in_next_block(A1), D0
+        MOVE.W  D0, io_block_low(A0)
+        SWAP    D0
+        MOVE.W  D0, io_block_high(A0)
+        CLR.W   io_control(A0)
+        BIOS    #read_data
+        MOVE.W  io_result(A0), D0       ; return io_result
+        RELEASE io_length
+        RESTORE A0
+        RTS                             ; return from read_block
+
+write_block     ; writes the next block specified by the extra fields of
+                ; the output buffer in A1, returning the io_result in D0
+                ; low word
+
+        SAVE    A0
+        ALLOC   io_length, A0           ; allocate a disk i/o block
+        MOVE_BW out_channel(A1), D0
+        MOVE.W  D0, io_chan(A0)
+        MOVE.L  #block_length, io_num_bytes(A0)
+        PEA     <out_data+1.>(A1)       ; buffer data area
+        POP_L   io_buffer(A0)
+        MOVE.L  out_next_block(A1), D0
+        MOVE.W  D0, io_block_low(A0)
+        SWAP    D0
+        MOVE.W  D0, io_block_high(A0)
+        CLR.W   io_control(A0)
+       .IF      ~disk_write
+        out_string 16., "Disk block write"
+        BREAK
+       .ENDC;   ~disk_write
+        BIOS    #write_data
+        MOVE.W  io_result(A0), D0       ; return io_result
+        RELEASE io_length
+        RESTORE A0
+        RTS                             ; return from write_block
+
+read_directory  ; reads the directory of a volume starting at block D2
+                ; of unit D1 into the area pointed at by A0, returning
+                ; io_result in D0 low word.
+
+        SAVE    A0/D2
+        MOVE.L  A0, D0
+        ALLOC   io_length, A0           ; allocate disk io block
+        MOVE.W  D1, io_chan(A0)         ; select drive for input
+        MOVE.L  #d_length, io_num_bytes(A0) ; read four blocks
+        MOVE.L  D0, io_buffer(A0)       ; read to area pointed at by A0
+        ADDQ.L  #d_block, D2            ; start reading at d_block
+        MOVE.W  D2, io_block_low(A0)
+        SWAP    D2
+        MOVE.W  D2, io_block_high(A0)
+        CLR.W   io_control(A0)          ; synchronous transfer
+        BIOS    #read_data              ; do disk read
+        MOVE.W  io_result(A0), D0
+        RELEASE io_length
+        RESTORE A0/D2
+        RTS                             ; return from read_directory
+              
+write_directory ; writes from the area pointed at by A0, the directory of a
+                ; volume starting at block D2 of unit D1, checking that it
+                ; will fit below block D3, and returning the io_result in
+                ; D0 low word, or some other non-zero value if the directory
+                ; will not fit.
+
+        SAVE    A0-A1
+        MOVEA.L A0, A1
+        ALLOC   io_length, A0           ; allocate disk io block
+        MOVE.W  D1, io_chan(A0)         ; select drive for input
+        MOVE.W  #io_res_dov, io_result(A0) ; set default result
+        MOVE.L  #d_length, io_num_bytes(A0) ; write four blocks
+        MOVE.L  A1, io_buffer(A0)       ; write from area pointed at by A0
+        CLR.W   io_control(A0)          ; synchronous transfer
+        MOVE.L  D2, D0
+        ADDQ.L  #d_block, D0
+        BSR.S   $50
+        TST.W   io_result(A0)
+        BNE.S   $10
+        CMPI.W  #<d_block+<2.*<d_length/block_length>>>, d_end_block(A1)
+        BNE.S   $10
+        MOVE.L  D2, D0
+        ADDQ.L  #<d_block+<d_length/block_length>>, D0
+        BSR.S   $50
+    $10 MOVE.W  io_result(A0), D0
+        RELEASE io_length
+        RESTORE A0-A1
+        RTS                             ; return from write_directory
+
+    $50 MOVE.W  D0, io_block_low(A0)    ; start writing at block D0 of volume
+        SWAP    D0
+        MOVE.W  D0, io_block_high(A0)
+        SWAP    D0
+        CMP.L   D2, D3
+        BLS.S   $60
+        ADDQ.L  #<d_length/block_length>, D0
+        CMP.L   D0, D3
+        BCS.S   $60
+       .IF      ~disk_write
+        out_string 15., "Directory write"
+        BREAK
+       .ENDC;   ~disk_write
+        BIOS    #write_data             ; do disk write
+    $60 RTS                             ; return from subroutine at $50
+
+get_blocked     ; routine called as an in_get_buffer routine
+                ; reads a new bufferfull from a blocked volume into the buffer
+                ; pointed at by A1
+
+        SAVE    D0
+        MOVE.L  in_next_block(A1), D0   ; get block number to be read
+        CMP.L   in_end_block(A1), D0    ; check for end of file
+        BCC.S   $20
+        BSR     read_block
+        TST.W   D0
+        BNE.S   $10
+        ADDQ.L  #1., in_next_block(A1)  ; increment stored block number
+        BSR.S   trans_block             ; also sets block length in in_writer
+        BRA.S   $30
+
+    $10 out_io_res 13., " on disk read" ; error, treat as end of file
+                         
+    $20 PEA     get_new_file            ; read past end of file
+        POP_L   in_get_buffer(A1)
+        CLR.W   in_writer(A1)           ; read no characters
+
+    $30 RESTORE D0
+        RTS                             ; return from get_blocked
+
+get_blo1        ; routine called as an in_get_buffer routine
+                ; replaces call of get_blocked, when the previous block ended
+                ; with a dle character, so that the compression count may be
+                ; suppressed.
+
+        PEA     get_blocked             ; restore routine for next call
+        POP_L   in_get_buffer(A1)
+        BSR     get_blocked
+        MOVE.B  #" ", <in_data+1.>(A1)  ; overwrite compression count
+        RTS                             ; return from get_blo1
+
+trans_block     ; routine used by get_blocked
+                ; translate the characters in the disk block in the buffer
+                ; pointed at by A1.
+
+        SAVE    A0/D0-D1
+        CMPI.B  #DLE, <in_data+block_length>(A1)
+        BNE.S   $10                     ; check for DLE at end of block
+        MOVE.B  #" ", <in_data+block_length>(A1)
+        LEA     get_blo_1, A0
+        MOVE.L  A0, in_get_buffer(A1)
+    $10 MOVE.W  #<block_length-1.>, D0  ; translate rest of block
+    $20 TST.B   <in_data+1.>(A1, D0.W)  ; skip trailing NULLs
+        DBNE    D0, $20
+        MOVE.W  D0, in_writer(A1)       ; sets in_writer to be one too small
+        BMI.S   $50
+        LEA     $100, A0                ; get translation table
+        MOVEQ   #0., D1
+    $30 MOVE.B  <in_data+1.>(A1, D0.W), D1
+        MOVE.B  0.(A0, D1.W), <in_data+1.>(A1, D0.W)
+        BNE.S   $40
+        MOVE.B  #" ", <in_data+1.>(A1, D0.W)  ; trap character: always DLE
+        MOVE.B  #" ", <in_data+2.>(A1, D0.W)
+    $40 DBRA    D0, $30
+    $50 ADDQ.W  #1., in_writer(A1)
+        RESTORE A0/D0-D1
+        RTS                             ; return from trans_block
+
+   $100 ; translation table for disk input blocks
+
+       .BYTE  " ",  01.,  02.,  03.,  04.,  05.,  06.,  07.
+       .BYTE  08.,  09.,  10.,  11.,  12.,  " ",  14.,  15.
+       .BYTE   0 ,  17.,  18.,  19.,  20.,  21.,  22.,  23.
+       .BYTE  24.,  25.,  26.,  27.,  28.,  29.,  30.,  31.
+       .BYTE  " ",  "!", """",  "#",  "$",  "%",  "&",  "'"
+       .BYTE  "(",  ")",  "*",  "+",  ",",  "-",  ".",  "/"
+       .BYTE  "0",  "1",  "2",  "3",  "4",  "5",  "6",  "7"
+       .BYTE  "8",  "9",  ":",  ";",  "<",  "=",  ">",  "?"
+       .BYTE  "@",  "A",  "B",  "C",  "D",  "E",  "F",  "G"
+       .BYTE  "H",  "I",  "J",  "K",  "L",  "M",  "N",  "O"
+       .BYTE  "P",  "Q",  "R",  "S",  "T",  "U",  "V",  "W"
+       .BYTE  "X",  "Y",  "Z",  "[",  "\",  "]",  "^",  "_"
+       .BYTE  "`",  "a",  "b",  "c",  "d",  "e",  "f",  "g"
+       .BYTE  "h",  "i",  "j",  "k",  "l",  "m",  "n",  "o"
+       .BYTE  "p",  "q",  "r",  "s",  "t",  "u",  "v",  "w"
+       .BYTE  "x",  "y",  "z",  "{",  "|",  "}",  "~",  DEL
+
+       .BYTE  " ",  01.,  02.,  03.,  04.,  05.,  06.,  07.
+       .BYTE  08.,  09.,  10.,  11.,  12.,  " ",  14.,  15.
+       .BYTE   0 ,  17.,  18.,  19.,  20.,  21.,  22.,  23.
+       .BYTE  24.,  25.,  26.,  27.,  28.,  29.,  30.,  31.
+       .BYTE  " ",  "!", """",  "#",  "$",  "%",  "&",  "'"
+       .BYTE  "(",  ")",  "*",  "+",  ",",  "-",  ".",  "/"
+       .BYTE  "0",  "1",  "2",  "3",  "4",  "5",  "6",  "7"
+       .BYTE  "8",  "9",  ":",  ";",  "<",  "=",  ">",  "?"
+       .BYTE  "@",  "A",  "B",  "C",  "D",  "E",  "F",  "G"
+       .BYTE  "H",  "I",  "J",  "K",  "L",  "M",  "N",  "O"
+       .BYTE  "P",  "Q",  "R",  "S",  "T",  "U",  "V",  "W"
+       .BYTE  "X",  "Y",  "Z",  "[",  "\",  "]",  "^",  "_"
+       .BYTE  "`",  "a",  "b",  "c",  "d",  "e",  "f",  "g"
+       .BYTE  "h",  "i",  "j",  "k",  "l",  "m",  "n",  "o"
+       .BYTE  "p",  "q",  "r",  "s",  "t",  "u",  "v",  "w"
+       .BYTE  "x",  "y",  "z",  "{",  "|",  "}",  "~",  DEL
+
+put_blocked     ; routine called as an out_put_buffer routine
+                ; expects its output buffer in A1
+                ; behaviour depends on the pb_ parameter in D0
+                ;
+                ;   pb_close_file      flushes buffer and closes file
+                ;   pb_full_buffer     dumps the buffer if it is really full
+
+        SAVE    D0
+        CMP.L   #pb_close_file, D0      ; if closing the file
+        BNE.S   $20
+        MOVE.W  out_writer(A1), D0      ; and if anything in the buffer
+        BEQ.S   $20
+    $00 CMP.W   out_length(A1), D0      ; then pad with NULLs until full
+        BEQ.S   $10
+        ADDQ.W  #1., D0
+        MOVE.B  #NULL, out_data(A1, D0.W)
+        BRA.S   $00
+    $10 MOVE.W  D0, out_writer(A1)      ; update buffer for write_block
+    $20 MOVE.W  out_writer(A1), D0
+        CMP.W   out_length(A1), D0      ; if buffer not full
+        BNE.S   $50                     ; then do not output
+        MOVE.L  out_next_block(A1), D0  ; else get block number to be written
+        CMP.L   out_end_block(A1), D0   ; check for end of file
+        BCS.S   $25                     ; treat as error
+        MOVEQ   #io_res_no_room, D0
+        BRA.S   $30
+    $25 BSR     write_block
+        TST.W   D0
+        BEQ.S   $40
+    $30 out_io_res 14., " on disk write" ; error, treat as end of file
+        RESTORE D0
+        BRA.S   $60
+    $40 ADDQ.L  #1., out_next_block(A1) ; increment stored block number
+        CLR.W   out_writer(A1)          ; mark buffer as successfully emptied
+    $50 RESTORE D0
+        CMP.L   #pb_close_file,D0
+        BNE.S   $99
+    $60 SAVE    D0
+        PEA     put_new_file            ; close file
+        POP_L   out_put_buffer(A1)
+        BSR     try_close_write         ; try to make the file permanent
+        TST.L   D0
+        BEQ.S   $70
+        out_io_res 20., " closing output file"
+    $70 RESTORE D0
+    $99 RTS                             ; return from put_blocked
+
+;       end of file SECD.DISKS.TEXT
+

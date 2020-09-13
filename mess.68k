@@ -1,0 +1,180 @@
+;       file SECD.MESS.TEXT
+
+read_serial     ; reads a character from the standard terminal into the low
+                ; byte of D0
+
+        SAVE    A0
+        ALLOC   io_length, A0           ; allocate an io block in A0
+        ALLOC   1., SP                  ; and a one byte buffer
+        MOVE.W  #term_in_channel, io_chan(A0) ; set up serial input channel
+        MOVE.L  #1., io_num_bytes(A0)   ; transfer one byte
+        MOVE.L  SP, io_buffer(A0)       ; address of buffer for character
+        CLR.W   io_control(A0)          ; control word: synchronous transfer
+        BIOS    #read_data              ; read characters
+        MOVE.B  (SP), D0                ; get read character
+        RELEASE <io_length + 1.>        ; release io block and buffer
+        RESTORE A0
+        RTS                             ; return from read_serial
+
+write_serial    ; writes a sequence of characters to the standard terminal
+                ; A1 points at a byte count which precedes the characters
+
+        SAVE    D0/A0-A1
+        ALLOC   io_length, A0           ; allocate an io block in A0
+        MOVE.W  #term_out_channel, io_chan(A0) ; set up serial output channel
+        MOVE_BL (A1)+, D0
+        MOVE.L  D0, io_num_bytes(A0)    ; length of transfer in bytes
+        MOVE.L  A1, io_buffer(A0)       ; address of characters
+        CLR.W   io_control(A0)          ; control word: synchronous transfer
+        BIOS    #write_data             ; write characters
+        RELEASE io_length               ; release io block
+        RESTORE D0/A0-A1
+        RTS                             ; return from write_serial
+
+write_number    ; writes a small number from D0 to the standard terminal
+
+        SAVE    D0/A0-A1
+        ALLOC   io_length, A0           ; allocate an io block in A0
+        ALLOC   1, A1
+        MOVE.W  #term_out_channel, io_chan(A0) ; set up serial output channel
+        MOVE.L  #1, io_num_bytes(A0)    ; length of transfer in bytes
+        MOVE.L  A1, io_buffer(A0)       ; address of characters
+        CLR.W   io_control(A0)          ; control word: synchronous transfer
+        BSR.S   $10
+        RELEASE io_length               ; release io block
+        RELEASE 1
+        RESTORE D0/A0-A1
+        RTS
+
+    $00 SAVE    D0
+        BIOS    #write_data
+        RESTORE D0
+        RTS
+
+    $10 TST.L   D0
+        BPL.S   $20
+        MOVE.B  #"-", (A1)
+        BSR.S   $00
+        NEG.L   D0
+    $20 ANDI.L  #0000FFFFH, D0
+        DIVU    #10., D0
+        TST.W   D0
+        BEQ.S   $30
+        SAVE    D0
+        BSR.S   $20
+        RESTORE D0
+    $30 SWAP    D0
+        ADD.B   #"0", D0
+        MOVE.B  D0, (A1)
+        BRA.S   $00
+
+write_string    ; writes an inline sequence of characters to the terminal
+                ; and (carefully) adjusts return address
+                ; Call is of the form
+                ;
+                ;               BSR     write_string
+                ;              .BYTE    <length>
+                ;              .BLOCK   <length>
+                ;              .ALIGN   2.
+
+        SAVE    D0/A1
+        MOVEA.L 8.(SP), A1              ; get address of string
+        BSR     write_serial            ; output the characters
+        MOVE_BL (A1)+, D0
+        ADD.L   A1, D0                  ; point at end of string
+        EVEN_UP D0
+        MOVE.L  D0, 8.(SP)              ; restore return address
+        RESTORE D0/A1
+        RTS                             ; return from write_string
+
+write_indexed   ; writes to the D0th entry of the table of strings pointed at
+                ; by A1 to the terminal
+                ;
+                ; the table has the form
+                ;
+                ;       <word offset of "unexpected value">
+                ;       <block of <n> word offsets of strings>
+                ; A1 -> <word containing -(n + 1) >
+                ;
+                ; and is (validly) indexed from -n to -1
+
+        SAVE    D0-D1/A1
+        MOVE.W  (A1), D1
+        CMP.W   D1, D0
+        BHI.S   $10
+        MOVE.W  D1, D0                  ; set default string
+    $10 LSL.W   #1., D0
+        ADD.W   0.(A1, D0.W), D0        ; get offset of string from table
+        EXT.L   D0                      ; and extend it to a long word
+        ADDA.L  D0, A1
+        BSR     write_serial
+        RESTORE D0-D1/A1
+        RTS                             ; return from write_indexed
+
+write_io_result ; writes a message to the terminal describing the io_result
+                ; value in D0, and follows this by the constant string which
+                ; follows the call
+                ;
+                ; Call is of the form
+                ;
+                ;               BSR     write_io_result
+                ;              .BYTE    <length>
+                ;              .BLOCK   <length>
+                ;              .ALIGN   2.
+
+        SAVE    D0/A1
+        LEA     io_res_messages, A1
+        BSR     write_indexed
+        MOVEA.L 8.(SP), A1              ; get address of string
+        BSR     write_serial            ; output the characters
+        MOVE_BL (A1)+, D0
+        ADD.L   A1, D0                  ; point at end of string
+        EVEN_UP D0
+        MOVE.L  D0, 8.(SP)              ; restore return address
+        RESTORE D0/A1
+        RTS                             ; return from write_io_result
+
+write_question  ; Writes an inline sequence of characters to the terminal
+                ; and (carefully) adjusts return address. Reads a sequence
+                ; of characters from the terminal until one of these is
+                ; a "y", "Y", "n", or "N", and returns EQ or NE depending
+                ; on whether it is one of the former pair, or of the latter.
+                ;
+                ; Call is of the form
+                ;
+                ;               BSR     write_question
+                ;              .BYTE    <length>
+                ;              .BLOCK   <length>
+                ;              .ALIGN   2.
+
+        SAVE    D0-D1/A1
+        MOVEA.L 12.(SP), A1             ; get address of string
+        BSR     write_serial            ; output the characters
+        MOVE_BL (A1)+, D0
+        ADD.L   A1, D0                  ; point at end of string
+        EVEN_UP D0
+        MOVE.L  D0, 12.(SP)             ; restore return address
+    $10 BSR     read_serial
+        CMP.B   #"y", D0
+        BEQ.S   $20
+        CMP.B   #"Y", D0
+        BEQ.S   $20
+        CMP.B   #"n", D0
+        BEQ.S   $20
+        CMP.B   #"N", D0
+        BNE.S   $10
+    $20 MOVE_BW -(A1), D1
+        LEA     $100, A1
+        SUBQ.W  #1., D1
+    $30 BSR     write_serial
+        DBRA    D1, $30
+        CMP.B   #"y", D0
+        BEQ.S   $40
+        CMP.B   #"Y", D0
+    $40 RESTORE D0-D1/A1
+        RTS                             ; return from write_question
+
+  $100 .BYTE    3., BS, " ", BS
+       .ALIGN   2.
+
+;       end of file SECD.MESS.TEXT

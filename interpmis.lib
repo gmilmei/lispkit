@@ -1,0 +1,11 @@
+((head' lambda(c)(if(atom c)(quote Error)(head c)))(tail' lambda(c)(if(
+atom c)(quote Error)(tail c)))(assoclist' lambda(l)(if(atom l)(quote NIL
+)(if(atom(head l))(assoclist'(tail l))(if(atom(head(head l)))(cons(head
+l)(assoclist'(tail l)))(assoclist'(tail l))))))(isfunction lambda(f)(unless
+(atom f)(eq(head f)(quote __function__))))(makefunction lambda(formals body
+n v)(cons(quote __function__)(cons(cons formals body)(cons n v))))(showfunction
+lambda(f)(let(cons(head' l)(cons(tail' l)(quote NIL)))(l head'(tail f))
+))(iscode lambda(k)(unless(atom k)(eq(head k)(quote ____code____))))(makecode
+lambda(k)(cons(quote ____code____)k))(showcode lambda(k)(let(cons(head'
+l)(cons(quote in)(cons(tail' l)(quote NIL))))(l tail k)))(reserved lambda
+(a)(member a(quote(__function__ ____code____)))))

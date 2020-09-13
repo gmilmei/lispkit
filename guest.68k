@@ -1,0 +1,72 @@
+       .RADIX   2.
+       .TITLE   "Stand alone SECD machine for the Sage ij/iv"
+       .ASCIILIST
+       .CONDLIST
+       .MACROLIST
+       .PATCHLIST
+
+off    .EQU     0       ; flag settings
+on     .EQU  ~off
+
+announce       .EQU off         ; do not detail the states of these flags
+stand_alone    .EQU  on         ; do not preserve the p-machine environment
+disk_writes    .EQU  on         ; do not prevent deliberate disk writes
+recursive      .EQU off         ; non-recursive garbage collector
+gc_count       .EQU off         ; do not count marked cells in g/c
+screen_led     .EQU  on         ; echo g/c lamp to the screen
+compact_cons   .EQU off         ; do not generate subroutine calls for "cons"
+gc_symbols     .EQU  on         ; reclaim inaccessible symbols
+
+version        .EQU "3"
+sub_version    .EQU "b"
+
+        ;---------------------------------------------------------------;
+        ;                                                               ;
+        ;       (c)     Copyright May 1983, Geraint Jones               ;
+        ;               Oxford University Computing Laboratory          ;
+        ;               Programming Research Group                      ;
+        ;               8-11, Keble Road, Oxford, OX1 3QD               ;
+        ;                                                               ;
+        ;---------------------------------------------------------------;
+       .PAGE
+       .RELPROC guest, 3.
+
+; PROCEDURE guest(VAR system_id, prefix_id : VID; date_stamp : DATEREC)
+;
+;    called once by the host, executes the code and returns one
+;    of the values of type return_code
+;
+;       system_id: volume name to be substituted for * in file names
+;       prefix_id: default volume name to be prefixed to file names
+
+        BRA     initialisation          ; defined in SECD.INIT.TEXT
+
+       .ASCII   "(c) Copyright May 1983 Geraint Jones   "
+       .ASCII   "Oxford University Computing Laboratory "
+       .ASCII   "Programming Research Group             "
+       .ASCII   "8-11, Keble Road, Oxford, OX1 3QD      "
+
+       .IF      stand_alone
+
+code_base       ; code before this label is discarded in relocation
+
+       .ENDC;   stand_alone
+
+       .INCLUDE SECD.DECL.TEXT          ; constants and macros
+       .INCLUDE SECD.OPS.TEXT           ; extra op codes for the 68000
+       .INCLUDE SECD.STORE.TEXT         ; heap allocation routines
+       .INCLUDE SECD.MICRO.TEXT         ; microcode for instructions
+       .INCLUDE SECD.MC.TEXT            ; fetch/execute cycle
+       .INCLUDE SECD.MESS.TEXT          ; error message routines
+       .INCLUDE SECD.BOOT.TEXT          ; re-bootstraping routine
+       .INCLUDE SECD.SRIAL.TEXT         ; serial channel routines
+       .INCLUDE SECD.DISKS.TEXT         ; blocked volume routines
+       .INCLUDE SECD.VOLS.TEXT          ; UCSD file and volume interface
+       .INCLUDE SECD.FILES.TEXT         ; file control routines
+       .INCLUDE SECD.INPUT.TEXT         ; input stream routines
+       .INCLUDE SECD.OUTPT.TEXT         ; output stream routines
+       .INCLUDE SECD.DATA.TEXT          ; non heap data areas
+       .ALIGN 2.
+       .INCLUDE SECD.INIT.TEXT          ; initialisation code         
+
+       .END

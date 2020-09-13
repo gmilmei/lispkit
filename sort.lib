@@ -1,0 +1,5 @@
+((quicksort lambda(less)(letrec sort(sort lambda(l)(if(atom l)l(let(append
+(sort beginning)(append middle(sort ending)))(beginning filter(lambda(x
+)(less x(head l)))(tail l))(middle filter(lambda(x)(incomparable x(head
+l)))l)(ending filter(lambda(x)(less(head l)x))(tail l)))))(incomparable
+lambda(a b)(if(less a b)(quote F)(if(less b a)(quote F)(quote T)))))))

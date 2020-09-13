@@ -1,0 +1,11 @@
+((compilep letrec(lambda(pat)(let(lambda(x)(c x(lambda(x)x)))(c head(cp
+pat(quote NIL)))))(cp lambda(p v)(letrec(if(number p)(if(member p v)(cons
+(oldvar p)v)(cons(newvar p)(cons p v)))(if(atom p)(cons(atomic p)v)(cons
+(composite p(head h)(head t))(tail t))))(h cp(head p)v)(t cp(tail p)(tail
+h))))(oldvar lambda(p)(lambda(x e)(if(unless(eq e(quote error))(equal x
+(e p)))e(quote error))))(newvar lambda(p)(lambda(x e)(if(eq e(quote error
+))(quote error)(lambda(a)(if(eq a p)x(e a))))))(atomic lambda(p)(lambda
+(x e)(if(eq x p)e(quote error))))(composite lambda(p h t)(lambda(x e)(if
+(or(atom x)(eq e(quote error)))(quote error)(t(tail x)(h(head x)e))))))
+(compilet lambda(tem)(lambda(e)(letrec(ct tem)(ct lambda(t)(if(number t
+)(e t)(if(atom t)t(cons(ct(head t))(ct(tail t))))))))))

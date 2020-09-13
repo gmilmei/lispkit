@@ -1,0 +1,21 @@
+((append lambda(e1 e2)(if(atom e1)e2(cons(head e1)(append(tail e1)e2)))
+)(member lambda(e l)(unless(atom l)(or(eq e(head l))(member e(tail l)))
+))(equal lambda(e1 e2)(or(eq e1 e2)(unless(or(atom e1)(atom e2))(and(equal
+(head e1)(head e2))(equal(tail e1)(tail e2))))))(null lambda(e)(eq e(quote
+NIL)))(length lambda(l)(if(atom l)(quote 0)(add(quote 1)(length(tail l)
+))))(first lambda(n l)(if(or(eq n(quote 0))(atom l))(quote NIL)(cons(head
+l)(first(sub n(quote 1))(tail l)))))(list flexible(lambda(l)l))(not lambda
+(c)(if c(quote F)(quote T)))(or lambda(c1 c2)(if c1(quote T)c2))(and lambda
+(c1 c2)(if c1 c2(quote F)))(unless lambda(c1 c2)(if c1(quote F)c2))(until
+lambda(e l)(if(eq(head l)e)(quote NIL)(cons(head l)(until e(tail l)))))
+(after lambda(e l)(if(eq(head l)e)(tail l)(after e(tail l))))(untilend lambda
+(l)(until(quote end)l))(afterend lambda(l)(after(quote end)l))(map lambda
+(f l)(if(atom l)(quote NIL)(cons(f(head l))(map f(tail l)))))(reduce lambda
+(f l z)(if(atom l)z(f(head l)(reduce f(tail l)z))))(transpose lambda(m)
+(if(atom m)m(letrec(t m)(t lambda(m)(let(if(reduce or(map atom m)(quote
+F))(quote NIL)(cons heads(t tails)))(heads map head m)(tails map tail m
+))))))(filter lambda(p l)(if(atom l)(quote NIL)(if(p(head l))(cons(head
+l)(filter p(tail l)))(filter p(tail l)))))(close lambda(r l)(let(if(equal
+l l')l(close r l'))(l' r l)))(number lambda(x)(eq x(add x(quote 0))))(load_code
+lambda(c)(c))(apply lambda(f l)(apply_code(make_closure f)(make_arglist
+l)))(newline chr(quote 13))(space chr(quote 32)))

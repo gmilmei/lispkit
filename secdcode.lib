@@ -1,0 +1,12 @@
+((run_and_halt quote((1(0.0)24 21)))(print_item quote((1(0.0)24 26 1(0.
+0)5)))(read_item quote((25 5)))(chr quote((1(0.0)24 27 5)))(apply_code quote
+((1(0.1)24 1(0.0)24 4 5)))(flexible lambda(f)(let(strict_cons code environment
+)(code quote(2 NIL 3 NIL 11 10 13 1(1.0)24 4 5))(environment strict_cons
+(strict_cons f(quote NIL))(quote NIL))))(strict_cons quote((1(0.1)24 1(
+0.0)24 13 5)))(sequence quote((1(0.0)24 1(0.1)13 10 24 5)))(make_closure
+lambda(f)(sequence(inspect_code(head f))(sequence(inspect_env(tail f))f
+)))(make_arglist lambda(l)(sequence(inspect_arglist l)l))(inspect_code lambda
+(f)(finite f))(inspect_env lambda(e)(if(atom e)(quote T)(sequence(inspect_arglist
+(head e))(inspect_env(tail e)))))(inspect_arglist lambda(l)(if(atom l)(
+quote T)(inspect_arglist(tail l))))(finite lambda(e)(if(atom e)(quote T
+)(if(finite(head e))(finite(tail e))(quote F)))))

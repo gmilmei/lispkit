@@ -1,0 +1,8 @@
+((newcursor lambda(x)x)(keephead lambda(f k)(lambda(x)(k(cons(head f)x)
+)))(keeptail lambda(f k)(lambda(x)(k(cons x(tail f)))))(edit_file lambda
+(r)(head r))(edit_output lambda(r)(tail r))(return_file lambda(f)(cons f
+(quote NIL)))(return_message lambda(m r)(cons(edit_file r)(append m(edit_output
+r))))(state lambda(f s d)(cons f(cons s(cons d(quote NIL)))))(print lambda
+(f t)(cons(quote print)(cons f(cons t(quote NIL)))))(step lambda(t)(cons
+(quote continue)(cons(quote NIL)(cons t(quote NIL)))))(strict lambda(f)
+(lambda(t)(if(eq t(quote error))(quote error)(f t)))))

@@ -1,0 +1,2421 @@
+         .TITLE   "Experimental SECD machine for Vax from Sage ij/iv version" 
+                                  
+off      =        0               ; flag settings
+on       =        ^Coff           
+                                  
+announce =        off             ; do not detail the states of these flags
+stand_alone =     off             ; do preserve the p-machine environment
+disk_writes =     on              ; prevent deliberate disk writes
+recursive =       off             ; non-recursive garbage collector
+gc_count =        off             ; do count marked cells in g/c
+screen_led =      off             ; do echo g/c lamp to the screen
+compact_cons =    off             ; do not generate subroutine calls for "cons"
+compact_get =     on              ; do generate subroutine calls for get_char
+compact_put =     on              ; do generate subroutine calls for put_char
+limit_lines =     off             ; do not limit the length of output lines
+                                  
+version  =        <^A"3">         
+sub_version =     <^A"a">         
+                                  
+                                  ;---------------------------------------------------------------;
+                                  ;                                                               ;
+                                  ;       Copyright (c)   March 1983, Geraint Jones               ;
+                                  ;               Oxford University Computing Laboratory          ;
+                                  ;               Programming Research Group                      ;
+                                  ;               8-11, Keble Road, Oxford, OX2 6PE               ;
+				  ;      Translation from 68000 machine code 			  ;
+				  ;      Copyright (c) A M R Newman, Programming Research Group   ;
+				  ;								  ;
+                                  ;                                                               ;
+                                  ;---------------------------------------------------------------;
+         .PAGE                    
+         .PSECT   GUEST,QUAD,NOWRT 
+         .ENTRY   SECDMC,^M<R2,R3,R4,R5,R6,R7,R8,R9,R10,R11> 
+                                  
+; PROCEDURE guest(VAR system_id, prefix_id : VID; date_stamp : DATEREC)
+;
+;    called once by the host, executes the code and returns one
+;    of the values of type return_code
+;
+;       system_id: volume name to be substituted for * in file names
+;       prefix_id: default volume name to be prefixed to file names
+                                  
+         BRW      initialisation  ; defined in SECD.INIT.TEXT
+                                  
+         .ASCII   "Copyright (c) March 1983 Geraint Jones " 
+         .ASCII   "Oxford University Computing Laboratory " 
+         .ASCII   "Programming Research Group             " 
+         .ASCII   "8-11, Keble Road, Oxford, OX2 6PE      " 
+                                  
+         .IF NE   stand_alone     
+                                  
+code_base:                        ; code before this label is discarded in relocation
+                                  
+         .ENDC                    ;   stand_alone
+                                  
+                                  
+                                  
+;       file SECD.DECL.TEXT
+                                  
+;       environment: return codes
+                                  
+rc_ok    =        -1.             
+rc_sym_tab_full = -2.             
+rc_cell_store_full = -3.          
+rc_divide_zero =  -4.             
+rc_invalid_inst = -5.             
+rc_error =        -6.             
+         .IF NE   stand_alone     
+rc_break =        -7.             
+rc_min   =        rc_break        
+         .IFF                     
+rc_no_ram_disk =  -7.             
+rc_min   =        rc_no_ram_disk  
+         .ENDC                    
+                                  
+                                  
+;       assorted i/o constants
+                                  
+         .IF NE   limit_lines     
+line_length =     79.             ; maximum output line length
+         .ENDC                    ;   limit_lines
+                                  
+block_length =    512.            ; size of units of input
+                                  
+                                  
+                                  
+;       character set
+                                  
+control  =        31.             ; character modifiers
+function =        128.            
+                                  
+NULL     =        0.              
+BS       =        control&<^A"H"> 
+TAB      =        control&<^A"I"> 
+LF       =        control&<^A"J"> 
+CR       =        control&<^A"M"> 
+DLE      =        control&<^A"P"> 
+EOF      =        control&<^A"Z"> 
+space    =        <^A" ">         ; principally for use with .IF !
+line_delete =     function!<^A"C"> 
+DEL      =        127.            
+                                  
+;       SECD machine details
+                                  
+; S_reg        .EQU A1
+; E_reg        .EQU A2
+; C_reg        .EQU A4
+;                   A3          ; used either by p-machine break routine, or
+;                               ; secd machine break routine
+; D_reg        .EQU A5
+; new_cell     .EQU A6
+                                  
+;       heap declarations
+                                  
+numb_cells =      40000.           ; for testing
+cell_size =       9.              ; size of cell in bytes
+head     =        1.              ; position of head 
+tail     =        5.              ; position of tail in cell
+val      =        tail            ; position of the value of a symbol or number
+                                  
+cons_type =       0.              ; cell type flags
+recipe_type =     1.              
+numb_type =       2.              
+symb_type =       3.              
+                                  
+type_mask =       ^X03            ; bits occupied by cell type
+                                  
+atom_bit_index =  1.              ; index of bit which is set iff cell is atomic
+                                  
+mark_bit =        ^X80            ; garbage collector mark bit
+mark_bit_index =  7.              ; top bit of type byte
+                                  
+         .IF NE   ^Crecursive     
+state_bit_index = 6.              ; bit for state of non-recursive mark
+         .ENDC                    ; ~recursive
+                                  
+;       i/o constants: structure of an input buffer
+                                  
+in_length =       0.              
+in_reader =       2.              
+in_writer =       4.              
+in_extra =        6.              ; overhead on buffer size
+in_data  =        <in_extra-1.>   ; indexed from 1
+                                  
+;       i/o constants: fields specific to the standard input buffer
+                                  
+in_next_symbol =  -16.            ; free symbol location
+in_char  =        -12.            ; put back character
+in_next_block =   -10.            ; first block of rest of the file
+in_end_block =    -8.             ; disk block after end
+in_get_buffer =   -6.             ; routine for next block
+in_channel =      -2.             ; current input channel
+                                  
+in_file_length =  16.             ; overhead before buffer
+                                  
+;       i/o constants: structure of an output buffer
+                                  
+out_length =      0.              
+out_writer =      2.              
+out_extra =       4.              
+out_data =        <out_extra-1.>  
+                                  
+;       i/o constants: fields specific to the standard output buffer
+                                  
+         .IF NE   limit_lines     
+out_remaining =   -16.            ; space remaining on the output line
+         .ENDC                    ;   limit_lines
+out_date_stamp =  -14.            ; a date stamp for new permanent files
+out_vol_offset =  -12.            ; first block of the volume of a block file
+out_next_block =  -10.            ; first unwritten block of the file
+out_end_block =   -8.             ; first block after the end of the free space
+out_put_buffer =  -6.             ; the routine that empties the buffer
+out_channel =     -2.             ; number of the current output channel
+                                  
+         .IF NE   limit_lines     
+out_file_length = 16.             ; overhead before buffer
+         .IFF                     
+out_file_length = 14.             ; overhead before buffer
+         .ENDC                    
+                                  
+;       i/o constants: resons for calling the out_put_buffer routine
+                                  
+pb_full_buffer =  0.              ; buffer is not empty (may not be full)
+pb_close_file =   1.              ; make permanent any temporary files
+                                  
+;       token declarations
+                                  
+atomic   =        0.              ; symbol type values
+open_paren =      1.              
+close_paren =     2.              
+point    =        3.              
+                                  
+symbol_length =   12.             ; maximum token length
+symbol_stride =   <1.+symbol_length> ; size of symbol table entry
+symbol_chars =    0.              ; offset of chars (indexed from 1)
+numb_symbols =    500.            ; maximum number of distinct symbols
+                                  
+         .MACRO   symbol, A, B    ; initialises a constant symbol
+         FL_STRING symbol_length, A, <B> 
+         .ENDM                    ;   symbol
+                                  
+;       SECD op-codes
+                                  
+max_op_code =     27.             ; largest SECD op-code
+                                  
+;       fixed data structures: strings
+                                  
+         .MACRO   STRING, A, B    ; length is %1, characters are %2
+         .BYTE    A               
+         .ASCII   B               
+         .ENDM                    ;   STRING
+                                  
+         .MACRO   FL_STRING, X, B, C ; fixed length is X, actual length B
+         .IF EQ   <B-1>           ; Fix for bad converter
+         .BYTE    1., C           ; Get over converter program knowing 1 byte
+         .IFF                     
+         STRING   B, <C>          
+         .ENDC                    ; strings are constants
+         .REPT    X - B           
+         .BYTE    <^A" ">         
+         .ENDR                    
+         .ENDM                    ;   FL_STRING
+                                  
+         .MACRO   LINE, A, B      ; like string, but followed by CR, LF
+         .BYTE    <A>+2.          
+         .IF      NE   A          
+         .ASCII   B               
+         .ENDC                    
+         .BYTE    CR, LF          
+         .ENDM                    ;   LINE
+                                  
+         .MACRO   OFFSET, A, B    ; EQU to A offset by B
+         =        A + <B>         
+         .ENDM                    ;   OFFSET
+                                  
+         .MACRO   OFF_EVEN, A, B, C ; A EQU to B offset by an even
+A        =        B + <<<C>+1>&<^C1>> ; amount, at least C
+         .ENDM                    ;   OFF_EVEN
+                                  
+         .MACRO   LABEL, A        ; word PC relative address of A
+         .WORD    <<A> - .>       
+         .ENDM                    ;   LABEL
+                                  
+         .MACRO   CLABEL, A       ; word PC relative address of A
+                                  ; from end of case opcode
+                                  ; assumming lable $555 on first call
+         .WORD    <<A> - 555$>    
+         .ENDM                    ;   LABEL
+                                  
+;       end of file SECD.DECL.TEXT
+                                  
+                                  
+;       file SECD.OPS.TEXT
+                                  
+;       op-codes: general manipulations
+                                  
+         .MACRO   set_led A       ; Called to indicate garbage collection
+         .ENDM                    ; parameter is on or off
+                                  
+         .MACRO   EVEN_DN, A, ?B  ; round down a data register
+                                  ;VXBBCC  #0., A, B      Disable word alignment
+B:                                
+         .ENDM                    ;   EVEN_DN
+                                  
+         .MACRO   EVEN_UP, A, ?B  ; round up a data register
+                                  ;ADDQ.L  #1., A
+                                  ;VXBBCC  #0., A, B
+B:                                
+         .ENDM                    ;   EVEN_UP
+                                  
+         .MACRO   ALLOC, A, B     ; allocate A bytes of stack space
+         MOVAB    <<-<A>>&<^C^X0001>>(SP), SP 
+         .IF      DIF  B , SP     
+         MOVL     SP, B           
+         .ENDC                    
+         .ENDM                    ;   ALLOC
+                                  
+         .MACRO   RELEASE, A      ; release A bytes of stack space
+         MOVAB    <<<A>+^X0001>&<^C^X0001>>(SP), SP 
+         .ENDM                    ;   RELEASE
+                                  
+         .MACRO   MOVE_BW, A, B   ; move a byte into a word register
+         MOVZBW   A, B            
+         .ENDM                    ;   MOVE_BW
+                                  
+         .MACRO   MOVE_BL, A, B   ; move a byte into a long register
+         MOVZBL   A, B            
+         .ENDM                    ;   MOVE_BL
+                                  
+         .MACRO   MOVE_WL, A, B   ; move a word into a long register
+         MOVZWL   A, B            
+         .ENDM                    ;   MOVE_WL
+                                  
+                                  
+;       op-codes: stack manipulation
+                                  
+         .MACRO   PUSH_W, A       
+         MOVW     A, -(SP)        
+         .ENDM                    ;   PUSH_W
+                                  
+         .MACRO   PUSH_L, A       
+         MOVL     A, -(SP)        
+         .ENDM                    ;   PUSH_L
+                                  
+         .MACRO   POP_W, A        
+         MOVW     (SP)+, A        
+         .ENDM                    ;   POP_W
+                                  
+         .MACRO   POP_L, A        
+         MOVL     (SP)+, A        
+         .ENDM                    ;   POP_L
+                                  
+         .MACRO   POPA_W, A       
+         MOVEA.W  (SP)+, A        
+         .ENDM                    ;   POPA_W
+                                  
+         .MACRO   POPA_L, A       
+         MOVL     (SP)+, A        
+         .ENDM                    ;   POPA_L
+                                  
+         .MACRO   SAVE, A         ; save registers
+         PUSHR    A               
+         .ENDM                    ;   SAVE
+                                  
+         .MACRO   RESTORE, A      ; restore registers
+         POPR     A               
+         .ENDM                    ;   RESTORE
+                                  
+;       op-codes: environment calls
+                                  
+         .MACRO   EXIT, A         ; parameter is return code
+         MOVW     A, R0           
+         BRW      exit_label      
+         .ENDM                    ;   EXIT
+                                  
+                                  
+;       op-codes: i/o routines
+                                  
+         .MACRO   out_string, A, B ; output inline constant string
+         BSBW     write_string    
+         .IF      NE   A          
+         STRING   A, <B>          ; length of string and characters
+         ;.ALIGN  2.              
+         .ENDC                    
+         .ENDM                    ;   out_string
+                                  
+         .MACRO   out_line, A, B  ; output inline string and newline
+         BSBW     write_string    
+         LINE     A, <B>          ; length of string and characters
+         ;.ALIGN  2.              
+         .ENDM                    ;   out_line
+                                  
+         .MACRO   out_io_res, A, B 
+         BSBW     write_io_result 
+         LINE     A, <B>          
+         ;.ALIGN  2.              
+         .ENDM                    ;   out_io_result
+                                  
+         .MACRO   out_question, A, B 
+         BSBW     write_question  
+         STRING   A, <B>          
+         ;.ALIGN  2.              
+         .ENDM                    ;   out_question
+                                  
+;       op-codes: cell manipulation
+                                  
+         .MACRO   set_head, A, B, C ; head(B) := C, type A
+         MOVL     C, head(B)      ; NB scribbled on mark data
+         MOVB     A, (B)          
+         .ENDM                    ;   set_head
+                                  
+         .MACRO   update_head, A, B ; head(A) := B; corrupts B
+         MOVL     B, head(A)      
+         .ENDM                    ;   update_head
+                                  
+         .MACRO   update_ptr, A, B ; (A) := B; corrupts B
+         MOVL     B, (A)          ; A is either head(cell) or tail(cell)
+         .ENDM                    ;   update_ptr
+                                  
+         .MACRO   set_tail, A, B  ; tail(A) := B
+         MOVL     B, tail(A)      
+         .ENDM                    ;   set_tail
+                                  
+         .MACRO   set_atom, A, B, C ; sets B to be atom C of type A
+         MOVB     A, (B)          
+         MOVL     C, val(B)       
+         .ENDM                    ;   set_atom
+                                  
+;       op-codes: cell type testing
+                                  
+         .MACRO   IF_is_atom, A, B ; jump to B if A is type of an atom
+         BBS      #atom_bit_index, A, B 
+         .ENDM                    ;   IF_is_atom
+                                  
+         .MACRO   IFL_is_atom, A, B ; longer jump version of IF_is_atom
+         BBS      #atom_bit_index, A, B 
+         .ENDM                    ;   IFL_is_atom
+                                  
+         .MACRO   IF_is_composite, A, B ; jump to B if A is not the type of
+         BBC      #atom_bit_index, A, B ; an atom
+         .ENDM                    ;   IF_is_composite
+                                  
+         .MACRO   IF_is_free, A, B ; test whether cell marked last time
+         BBC      #mark_bit_index, A, B 
+         .ENDM                    ;   IF_is_free
+                                  
+         .MACRO   IF_busy_clear_mark, A, B ; clear mark, and if cell was marked,
+         BBSC   #mark_bit_index, A, B ; jump to B
+         .ENDM                    ;   IF_busy_clear_mark
+                                  
+         .MACRO   IF_busy_set_mark, A, B ; set mark, and if cell was marked,
+         BBSS   #mark_bit_index, A, B ; jump to B
+         .ENDM                    ;   IF_busy_set_mark
+                                  
+         .IF NE   ^Crecursive     ; routines for keeping g/c state
+                                  
+         .MACRO   clear_count, A, ?B ; mark cell as busy in the head
+         BBCC     #state_bit_index, A, B ; Quick Fix
+B:                                
+         .ENDM                    ;   clear_count
+                                  
+         .MACRO   set_count, A, ?B ; mark cell as busy in the tail
+         BBCS     #state_bit_index, A, B ; Quick Fix
+B:                                
+         .ENDM                    ;   set_count
+                                  
+         .MACRO   IF_count, A, B, C ; if cell is busy in the head, jump to
+         BBC      #state_bit_index, A, B ; B, if tail, C
+         BRB      C               
+         .ENDM                    ;   IF_count
+                                  
+         .ENDC                    ;   ~recursive
+                                  
+;       op-codes: cell allocation
+                                  
+         .IF NE   compact_cons    ; if generating small code
+                                  
+         .MACRO   allocate        ; finds a new free cell
+         BSBW     alloc_rt        
+         .ENDM                    ;   allocate
+                                  
+         .ENDC                    ;   compact_cons
+                                  
+         .IF NE   ^Ccompact_cons  ; if able to generate inline code
+                                  
+         .MACRO   allocate, ?A, ?B, ?C ; finds a new free cell, quickly
+;   A   ADDQ.L  #cell_size, new_cell
+A:       ADDL2    #cell_size, R12 
+;       CMPA.L  top_address, new_cell
+         CMPL     R12, R5         
+         BLEQU    B               
+         PUSHAB   C               ; set up subroutine call to return
+         BRW      alloc_rt        ; end of inline code
+;   B   IF_busy_clear_mark (new_cell), A  
+B:       IF_busy_clear_mark (R12), A 
+C:                                
+         .ENDM                    ;   allocate
+                                  
+         .ENDC                    ;   ~compact_cons
+                                  
+         .MACRO   make_pair, A, B, C ; make a new cell of type A,
+         allocate                 ; containing (B.C)
+;       set_head A, new_cell, B
+         set_head A, R12, B       
+;       set_tail new_cell, C
+         set_tail R12, C          
+         .ENDM                    ;   make_pair
+                                  
+         .MACRO   cons, A, B      
+         make_pair #cons_type, A, B 
+         .ENDM                    ;   cons
+                                  
+         .MACRO   recipe, A, B    
+         make_pair #recipe_type, A, B 
+         .ENDM                    ;   recipe
+                                  
+         .MACRO   make_atom, A, B 
+         allocate                 
+;       set_atom A, new_cell, B
+         set_atom A, R12, B       
+         .ENDM                    ;   make_atom
+                                  
+         .MACRO   symb, A         
+         make_atom #symb_type, A  
+         .ENDM                    ;   symb
+                                  
+         .MACRO   numb, A         
+         make_atom #numb_type, A  
+         .ENDM                    ;   numb
+                                  
+         .MACRO   update, A, B, ?C, ?D ; copies cell at B to cell at A
+         IF_is_free (A), C        ; test whether A was marked
+         MOVB     (B)+, (A)       
+         BBCS     #<mark_bit_index>, (A), D ; mark the new "a" accordingly
+         BRW      D               
+C:       MOVB     (B)+, (A)       
+         BBCC     #<mark_bit_index>, (A), D ; mark the new "a" accordingly
+D:       INCL     A               
+         MOVL     (B)+,(A)+       
+         MOVL     (B), (A)        
+         .ENDM                    ;   update
+                                  
+;       op-codes: in heap stacks
+                                  
+         .MACRO   cons_push, A, B 
+         cons     A, B            
+;       MOVEA.L new_cell, B
+         MOVL     R12, B          
+         .ENDM                    ;   cons_push
+                                  
+         .MACRO   head_pop, A     
+         MOVL     head(A), A          
+         .ENDM                    ;   head_pop
+                                  
+         .MACRO   tail_pop, A     
+         MOVL     tail(A), A      
+         .ENDM                    ;   tail_pop
+                                  
+;       fetch/execute cycle
+                                  
+         .IF NE   stand_alone     
+                                  
+         .MACRO   END             ; end instruction successfully
+         JMP      (R9)            
+         .ENDM                    ;   END
+                                  
+         .IFF                     
+                                  
+         .MACRO   END             ; end instruction successfully
+         BRW      fetch           
+         .ENDM                    ;   END
+                                  
+         .ENDC                    
+                                  
+;       end of file SECD.OPS.TEXT
+                                  
+                                  
+;       file SECD.STORE.TEXT
+                                  
+alloc_rt:                         ; called with the standard SECD machine registers, allocates
+                                  ; a free cell in new_cell
+                                  
+         .IF NE   compact_cons    ; if small code, then first do scan
+;   $00 ADDQ.L  #cell_size, new_cell
+00$:     ADDL2    #cell_size, R12 
+;       CMPA.L  top_address, new_cell
+         CMPL     R12, R5         
+         BGTRU    10$             
+;       IF_busy_clear_mark (new_cell), $00
+         IF_busy_clear_mark (R12), 00$ 
+         RSB                      ; return a value from alloc_rt
+10$:     .ENDC                    ; compact_cons
+                                  
+         .IF NE   gc_count        
+                                  
+         SAVE     <#^M<R1>>       
+         MOVL     R5, R1          
+         SUBL2    store_base, R1  
+         DIVL2    #cell_size, R1  ; divide 32 bits by cell_size
+                                  
+         SAVE     <#^M<R0,R6,R7>> 
+         ALLOC    symbol_stride, R6 
+         out_string 0             
+         .BYTE    11., CR, LF     
+         .ASCII   "Total of "     
+         ;.ALIGN  2.              
+         MOVL     R1, R0          
+         BSBW     num_to_string   
+         MOVL     R6, R7          
+         BSBW     write_serial    
+         out_string 8., <" cells, "> 
+         RELEASE  symbol_stride   
+         RESTORE  <#^M<R0,R6,R7>> 
+                                  
+         .ENDC                    ; gc_count
+                                  
+         set_led  on              ; signal beginning of mark phase
+                                  
+         .IF NE   recursive       ; code for recursive mark
+                                  
+         PUSH_L   store_base      ; an address not on the heap!
+;       MOVEM.L S_reg/E_reg/C_reg/D_reg/W_reg, -(SP)
+;       MOVEM.L A1/A2/A4/A5/W_reg, -(SP) ;Quick fix
+         SAVE     <#^M<R7,R8,R10,R11,R3>> 
+20$:     POPA_L   R12             
+         CMPL     store_base, R12 
+         BEQL     40$             
+30$:     IF_busy_set_mark (R12), 20$ 
+         .IF NE   gc_count        
+         SUBL2    #1., R1         ; count one for this cell
+         .ENDC                    ; gc_count
+         IF_is_atom (R12), 20$    
+         PUSH_L   tail(R12)       
+         MOVL     head(R12), R12  
+         BRB      30$             
+40$:                              
+         .ENDC                    ; recursive                 ; end of code for recursive mark
+                                  
+         .IF NE   ^Crecursive     ; code for non-recursive mark
+                                  
+         SAVE     <#^M<R0,R6,R7>> ; save registers across mark
+         PUSH_L   store_base      ; mark stack with a non-heap address
+;       MOVEM.L S_reg/E_reg/C_reg/D_reg, -(SP) ; need not mark from NIL, T, F
+;       MOVEM.L A1/A2/A4/A5, -(SP) ;Quick fix
+         SAVE     <#^M<R7,R8,R10,R11>> 
+         MOVL     R4, R6          ; u := NIL
+         MOVL     R3, R12         ; v := first tree to be marked
+20$:     IF_busy_set_mark (R12), 70$ ; if v is marked -> done
+         .IF NE   gc_count        
+         SUBL2    #1., R1         ; count one for the cell itself
+         .ENDC                    ; gc_count
+         IF_is_atom (R12), 70$    ; if v is an atom -> done
+30$:     MOVB     (R12), R0       ; D0 := type byte of v
+         MOVL     head(R12), R7   ; t := v.head
+         IF_busy_set_mark (R7), 50$ ; if v.head was marked -> head done
+         .IF NE   gc_count        
+         SUBL2    #1., R1         ; count one for the head of v
+         .ENDC                    ; gc_count
+         IF_is_atom (R7), 50$     ; if v.head is an atom -> head done
+         clear_count R0           
+         MOVL     R6, head(R12)   ; v.head := u
+         MOVB     R0, (R12)       
+         MOVL     R12, R6         ; u := v
+         MOVL     R7, R12         ; v := t ( = v.head )
+         BRB      30$             ;       -> mark
+40$:     MOVL     head(R6), R7    ; t := u.head
+         MOVB     (R6), R0        
+         MOVL     R12, head(R6)   ; u.head := v
+         MOVB     R0, (R6)        
+         MOVL     R6, R12         ; v := u
+         MOVL     R7, R6          ; u := t ( = u.head )
+50$:     MOVL     tail(R12), R7   ; t := v.tail
+         IF_busy_set_mark (R7), 70$ ; if v.tail was marked -> tail done
+         .IF NE   gc_count        
+         SUBL2    #1., R1         ; count one for the tail of v
+         .ENDC                    ; gc_count
+         IF_is_atom (R7), 70$     ; if v.tail is an atom -> tail done
+         set_count (R12)          
+         MOVL     R6, tail(R12)   ; v.tail := u
+         MOVL     R12, R6         ; u := v
+         MOVL     R7, R12         ; v := t ( = v.tail )
+         BRB      30$             ;       -> mark
+55$:     BRB      20$             ; $20 out of range of branch at end
+60$:     MOVL     tail(R6), R7    ; t := u.tail
+         MOVL     R12, tail(R6)   ; u.tail := v
+         MOVL     R6, R12         ; v := u
+         MOVL     R7, R6          ; u := t ( = u.tail )
+70$:     MOVL     R6, R0          
+         CMPL     R4, R0          ; if u = NIL
+         BEQL     80$             ; -> done
+         IF_count (R6), 40$, 60$  
+80$:     POPA_L   R12             ; v := next independent tree
+         CMPL     store_base, R12 
+         BNEQ     55$             ; indirect branch to $20 which is too far
+         RESTORE  <#^M<R0,R6,R7>> ; restore registers
+                                  
+         .ENDC                    ; ~recursive                ; end of code for non-recursive mark
+                                  
+         set_led  off             
+                                  
+         .IF NE   gc_count        
+                                  
+         SAVE     <#^M<R0,R6,R7>> 
+         ALLOC    symbol_stride, R6 
+         MOVL     R1, R0          
+         BSBW     num_to_string   
+         MOVL     R6, R7          
+         BSBW     write_serial    
+         out_string 6., <" free "> 
+         RELEASE  symbol_stride   
+         RESTORE  <#^M<R0,R6,R7>> 
+         RESTORE  <#^M<R1>>       
+                                  
+         .ENDC                    ; gc_count       
+                                  
+;   $90 ADDQ.L  #cell_size, new_cell    ; start scan of newly marked store
+90$:     ADDL2    #cell_size, R12 
+;       CMPA.L  top_address, new_cell
+         CMPL     R12, R5         
+         BGTRU    99$             
+;       IF_busy_clear_mark (new_cell), $90
+         IF_busy_clear_mark (R12), 90$ 
+         RSB                      ; return a value from alloc_rt
+                                  
+99$:     EXIT     #rc_cell_store_full ; if no luck, then store full
+                                  
+;       end of file SECD.STORE.TEXT
+                                  
+                                  
+                                  
+;       file SECD.MICRO.TEXT
+                                  
+LD_M:                             ; instruction #1
+                                  ;
+                                  ;       S E (LD (a.b).C) D  ->  (x.S) E C D
+                                  ;
+                                  ; where x is the b'th element of the a'th element of E
+                                  
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+;       MOVEA.L head(C_reg), A0             ; A0 := (a.b)
+         MOVL     head(R10), R6   
+         PUSH_L   R6              
+         head_pop R6              
+         MOVL     val(R6), R0     ; D0 := a
+         POPA_L   R6              
+         tail_pop R6              
+         MOVL     val(R6), R1     ; D1 := b
+;       MOVEA.L E_reg, A0               ; A0 := E
+         MOVL     R8, R6          
+00$:     SUBL2    #1., R0         
+         BLSS     01$             ; if a = 0 then done, else
+         tail_pop R6              ;   A0 := tail(A0)
+         BRB      00$             ;         a times
+01$:     head_pop R6              ; A0 := head(A0)
+02$:     SUBL2    #1., R1         
+         BLSS     03$             ; if b = 0 then done, else
+         tail_pop R6              ;   A0 := tail(A0)
+         BRB      02$             ;        b times
+03$:     MOVL     head(R6), R3    ; W := head(A0)
+;       cons_push W_reg, S_reg          ; S := (x.S)
+         cons_push R3, R7         
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+         END                      
+                                  
+LDC_M:                            ; instruction #2
+                                  ;
+                                  ;       S E (LD c.C) D  ->  (c.S) E C D
+                                  
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+;       MOVE.L  head(C_reg), W_reg          ; W := c
+         MOVL     head(R10), R3   
+;       cons_push W_reg, S_reg          ; S := (c.S)
+         cons_push R3, R7         
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+         END                      
+                                  
+LDF_M:                            ; instruction #3
+                                  ;
+                                  ;       S E (LDF c.C) D  ->  ((c.E).S) E C D
+                                  
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+;       cons    head(C_reg), E_reg
+         cons     head(R10), R8   
+;       MOVE.L  new_cell, W_reg         ; W := (c.E)
+         MOVL     R12, R3         
+;       cons_push W_reg, S_reg          ; S := ((c.E).S)
+         cons_push R3, R7         
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+         END                      
+                                  
+AP_M:                             ; instruction #4
+                                  ;
+                                  ;       ((c.r) a.S) E (AP.C) D  ->  NIL (a.r) c (S E C.D)
+                                  
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+;       cons_push C_reg, D_reg
+         cons_push R10, R11       
+;       cons_push E_reg, D_reg          ; D := (E C.D)
+         cons_push R8, R11        
+;       MOVEA.L head(S_reg), C_reg          ; C := (c.r)
+         MOVL     head(R7), R10   
+;       tail_pop S_reg                  ; S := (a.S)
+         tail_pop R7              
+;       cons_push tail(S_reg), D_reg    ; D := (S E C.D)
+         cons_push tail(R7), R11  
+;       cons    head(S_reg), tail(C_reg)    ; new_cell := (a.r)
+         cons     head(R7), tail(R10) 
+;       MOVEA.L new_cell, E_reg         ; E := (a.r)
+         MOVL     R12, R8         
+;       MOVEA.L head(C_reg), C_reg          ; C := c
+         MOVL     head(R10), R10  
+;       MOVEA.L NIL, S_reg              ; S := NIL
+         MOVL     R4, R7          
+         END                      
+                                  
+RTN_M:                            ; instruction #5
+                                  ;
+                                  ;       (a.s) e (RTN.c) (S E C.D)  ->  (a.S) E C D
+                                  
+;       cons    head(S_reg), head(D_reg)        ; new_cell := (a.S)
+         cons     head(R7), head(R11) 
+;       MOVEA.L new_cell, S_reg         ; S := (a.S)
+         MOVL     R12, R7         
+;       tail_pop D_reg                  ; D := (E C.D)
+         tail_pop R11             
+;       MOVEA.L head(D_reg), E_reg
+         MOVL     head(R11), R8   
+;       tail_pop D_reg                  ; D := (C.D)
+         tail_pop R11             
+;       MOVEA.L head(D_reg), C_reg
+         MOVL     head(R11), R10  
+;       tail_pop D_reg
+         tail_pop R11             
+         END                      
+                                  
+DUM_M:                            ; instruction #6
+                                  ;
+                                  ;       S E (DUM.C) D  ->  S (NIL.E) C D
+                                  
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+;       cons_push NIL, E_reg            ; E := (NIL.E)
+         cons_push R4, R8         
+         END                      
+                                  
+RAP_M:                            ; instruction #7
+                                  ;
+                                  ;       ((c.(x.e)) q.S) (r.E) (RAP.C) D  ->  NIL (q.e) c (S E C.D)
+                                  
+;       cons_push tail(C_reg), D_reg    ; D := (C.D)
+         cons_push tail(R10), R11 
+;       cons_push tail(E_reg), D_reg    ; D := (E C.D)
+         cons_push tail(R8), R11  
+;       MOVEA.L head(S_reg), C_reg          ; C := (c.(x.e))
+         MOVL     head(R7), R10   
+;       tail_pop S_reg
+         tail_pop R7              
+;       MOVEA.L tail(C_reg), E_reg      ; E := (x.e)
+         MOVL     tail(R10), R8   
+;       head_pop C_reg                  ; C := c
+         head_pop R10             
+;       MOVE.L  head(S_reg), D0             ; D0 := q
+         MOVL     head(R7), R0    
+;       update_head E_reg, D0           ; E := (q.e)
+         update_head R8, R0       
+;       tail_pop S_reg
+         tail_pop R7              
+;       cons_push S_reg, D_reg          ; D := (S E C.D)
+         cons_push R7, R11        
+;       MOVEA.L NIL, S_reg              ; S := NIL
+         MOVL     R4, R7          
+         END                      
+                                  
+SEL_M:                            ; instruction #8
+                                  ;
+                                  ;       (T.S) E (SEL t e.j) D  ->  S E t (j.D)
+                                  ;       (x.S) E (SEL t e.j) D  ->  S E e (j.D)  unless x = T
+                                  
+;       tail_pop C_reg                  ; C := (t e.j)
+         tail_pop R10             
+;       MOVEA.L tail(C_reg), A0         ; A0 := (e.j)
+         MOVL     tail(R10), R6   
+         MOVL     tail(R6), R1    ; D1 := j
+;       cons_push D1, D_reg             ; D := (j.D)
+         cons_push R1, R11        
+;       MOVEA.L head(S_reg), A0
+         MOVL     head(R7), R6    
+;       tail_pop S_reg
+         tail_pop R7              
+         MOVL     <val+T_cell>, R0 ; D0 := T as a symbol
+         CMPL     val(R6), R0     ; compare symbol values for equality
+         BNEQ     00$             ; if these are different, then not T
+         MOVB     (R6), R0        ; check is of type symbol
+         XORB2    #symb_type, R0  
+         BICB2    #^Ctype_mask, R0 ; and ignore irrelevant bits
+         BEQL     10$             
+;   $00 tail_pop C_reg                  ; C := (e.j)
+00$:     tail_pop R10             
+;   $10 head_pop C_reg
+10$:     head_pop R10             
+         END                      
+                                  
+JOIN_M:                           ; instruction #9
+                                  ;
+                                  ;       S E (JOIN.C) (c.D)  ->  S E c D
+                                  
+;       MOVEA.L head(D_reg), C_reg
+         MOVL     head(R11), R10  
+;       tail_pop D_reg
+         tail_pop R11             
+         END                      
+                                  
+CAR_M:                            ; instruction #10
+                                  ;
+                                  ;       ((a.b).S) E (CAR.C) D   ->  (a.S) E C D
+                                  
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+;       MOVEA.L head(S_reg), A0             ; A0 := (a.b)
+         MOVL     head(R7), R6    
+         MOVL     head(R6), R1    ; D1 := a
+;       cons    D1, tail(S_reg)         ; new_cell := (a.S)
+         cons     R1, tail(R7)    
+;       MOVEA.L new_cell, S_reg         ; S := (a.S)
+         MOVL     R12, R7         
+         END                      
+                                  
+CDR_M:                            ; instruction #11
+                                  ;
+                                  ;       ((a.b).S) E (CDR.C) D   ->  (b.S) E C D
+                                  
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+;       MOVEA.L head(S_reg), A0             ; A0 := (a.b)
+         MOVL     head(R7), R6    
+         MOVL     tail(R6), R1    ; D1 := b
+;       cons    D1, tail(S_reg)         ; new_cell := (b.S)
+         cons     R1, tail(R7)    
+;       MOVEA.L new_cell, S_reg         ; S := (b.S)
+         MOVL     R12, R7         
+         END                      
+                                  
+ATOM_M:                           ; instruction #12
+                                  ;
+                                  ;       (a.S) E (ATOM.C) D       ->  (T.S) E C D
+                                  ;       ((a.b).S) E (ATOM.C) D   ->  (F.S) E C D
+                                  
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+;       MOVEA.L head(S_reg), A0             ; A0 := a, or (a.b)
+         MOVL     head(R7), R6    
+         IF_is_atom (R6), 00$     
+         MOVAB    F_cell, R6      ; D1 := F
+         BRB      01$             
+00$:     MOVAB    T_cell, R6      ; D1 := T
+;   $01 cons    A0, tail(S_reg)         ; new_cell := (TorF.S)
+01$:     cons     R6, tail(R7)    
+;       MOVEA.L new_cell, S_reg         ; S := (... .S)
+         MOVL     R12, R7         
+         END                      
+                                  
+CONS_M:                           ; instruction #13
+                                  ;
+                                  ;       (a b.S) E (CONS.C) D  ->  ((a.b).S) E C D
+                                  
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+;       cons    head(S_reg), nothing        ; new_cell := (a.?)
+         cons     head(R7), R4    
+;       tail_pop S_reg                  ; S := (b.S)
+         tail_pop R7              
+;       set_tail new_cell, head(S_reg)      ; new_cell := (a.b)
+         set_tail R12, head(R7)   
+;       MOVE.L  new_cell, W_reg         ; W := (a.b)
+         MOVL     R12, R3         
+;       cons    W_reg, tail(S_reg)      ; new_cell := ((a.b).S)
+         cons     R3, tail(R7)    
+;       MOVEA.L new_cell, S_reg         ; S := ((a.b).S)
+         MOVL     R12, R7         
+         END                      
+                                  
+EQ_M:                             ; instruction #14
+                                  ;
+                                  ;       (a a.S) E (EQ.C) D  ->  (T.S) E C D
+                                  ;       (a b.S) E (EQ.C) D  ->  (F.S) E C D     if a <> b
+                                  
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+;       MOVEA.L head(S_reg), A0             ; A0 := a
+         MOVL     head(R7), R6    
+         MOVB     (R6), R0        ; type of a
+         MOVL     val(R6), R1     ; value of a
+;       tail_pop S_reg                  ; S := tail(S)
+         tail_pop R7              
+;       MOVEA.L head(S_reg), A0             ; A0 := b
+         MOVL     head(R7), R6    
+         CMPL     val(R6), R1     ; compare for equal values
+         BNEQ     01$             ; if different, then not EQ
+         MOVB     (R6), R1        ; compare types
+         XORB2    R0, R1          
+         BICB2    #^Ctype_mask, R1 ; ignoring irrelevant bits
+         BNEQ     01$             ; if different, then not EQ
+         IF_is_composite (R6), 01$ ; finally, if not both atoms, not eq
+00$:     MOVAB    T_cell, R6      ; A0 := T
+         BRB      02$             
+01$:     MOVAB    F_cell, R6      ; A0 := F
+;   $02 cons    A0, tail(S_reg)         ; new_cell := (TorF.S)
+02$:     cons     R6, tail(R7)    
+;       MOVEA.L new_cell, S_reg         ; S := (... .S)
+         MOVL     R12, R7         
+         END                      
+                                  
+ADD_M:                            ; instruction #15
+                                  ;
+                                  ;       (a b.S) E (ADD.C) D  ->  ((a+b).S) E C D
+                                  
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+;       MOVEA.L head(S_reg), A0             ; A0 := a
+         MOVL     head(R7), R6    
+         MOVL     val(R6), R1     ; D1 := value of a, as a number
+;       tail_pop S_reg                  ; S := tail(S)
+         tail_pop R7              
+;       MOVEA.L head(S_reg), A0             ; A0 := b
+         MOVL     head(R7), R6    
+         ADDL2    val(R6), R1     ; D1 := b + a, as a number
+         numb     R1              ; new_cell := (a+b)
+;       MOVE.L  new_cell, W_reg
+         MOVL     R12, R3         
+;       cons    W_reg, tail(S_reg)      ; new_cell := ((a+b).S)
+         cons     R3, tail(R7)    
+;       MOVEA.L new_cell, S_reg         ; S := ((a+b).S)
+         MOVL     R12, R7         
+         END                      
+                                  
+SUB_M:                            ; instruction #16
+                                  ;
+                                  ;       (a b.S) E (SUB.C) D  ->  ((b-a).S) E C D
+                                  
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+;       MOVEA.L head(S_reg), A0             ; A0 := a
+         MOVL     head(R7), R6    
+         MOVL     val(R6), R0     ; D0 := value of a, as a number
+;       tail_pop S_reg                  ; S := tail(S)
+         tail_pop R7              
+;       MOVEA.L head(S_reg), A0             ; A0 := b
+         MOVL     head(R7), R6    
+         MOVL     val(R6), R1     ; D1 := b as a number
+         SUBL2    R0, R1          ; D1 := b - a, as a number
+         numb     R1              ; new_cell := (b-a)
+;       MOVE.L  new_cell, W_reg
+         MOVL     R12, R3         
+;       cons    W_reg, tail(S_reg)      ; new_cell := ((b-a).S)
+         cons     R3, tail(R7)    
+;       MOVEA.L new_cell, S_reg         ; S := ((b-a).S)
+         MOVL     R12, R7         
+         END                      
+                                  
+MUL_M:                            ; instruction #17
+                                  ;
+                                  ;       (a b.S) E (MUL.C) D  ->  ((a*b).S) E C D
+                                  
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+;       MOVEA.L head(S_reg), A0             ; A0 := a
+         MOVL     head(R7), R6    
+         MOVL     val(R6), R0     ; D0 := value of a
+;       tail_pop S_reg                  ; S := tail(S)      
+         tail_pop R7              
+;       MOVEA.L head(S_reg), A0             ; A0 := b
+         MOVL     head(R7), R6    
+         MOVL     val(R6), R1     ; D1 := value of b
+         MULL2    R1, R0          ; D0 := value of a*b
+         numb     R0              ; new_cell := (a*b)
+;       MOVE.L  new_cell, W_reg
+         MOVL     R12, R3         
+;       cons    W_reg, tail(S_reg)      ; new_cell := ((a*b).S)
+         cons     R3, tail(R7)    
+;       MOVEA.L new_cell, S_reg         ; S := ((a*b).S)
+         MOVL     R12, R7         
+         END                      
+                                  
+DIV_M:                            ; instruction #18
+                                  ;
+                                  ;       (a b.S) E (DIV.C) D  ->  ((b/a).S) E C D
+                                  
+;       MOVEA.L head(S_reg), A0             ; A0 := a
+         MOVL     head(R7), R6    
+         MOVL     val(R6), R1     ; D1 := value of a
+;       tail_pop S_reg                  ; S := tail(S)
+         tail_pop R7              
+;       MOVEA.L head(S_reg), A0             ; A0 := b
+         MOVL     head(R7), R6    
+         MOVL     val(R6), R0     ; D0 := value of b
+         DIVL2    R1, R0          ; D0 := b/a
+         BVC      10$             
+         EXIT     #rc_divide_zero 
+10$:     numb     R0              ; new_cell := b/a
+;       MOVE.L  new_cell, W_reg
+         MOVL     R12, R3         
+;       cons    W_reg, tail(S_reg)      ; new_cell := ((b/a).S)
+         cons     R3, tail(R7)    
+;       MOVEA.L new_cell, S_reg         ; S := ((b/a).S)
+         MOVL     R12, R7         
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+         END                      
+                                  
+REM_M:                            ; instruction #19
+                                  ;
+                                  ;       (a b.S) E (REM.C) D  ->  ((b|a).S) E C D
+                                  
+;       MOVEA.L head(S_reg), A0             ; A0 := a
+         MOVL     head(R7), R6    
+         SAVE     <#^M<R2>>       
+         MOVL     val(R6), R2     ; D2 := value of a
+;       tail_pop S_reg                  ; S := tail(S)
+         tail_pop R7              
+;       MOVEA.L head(S_reg), A0             ; A0 := b
+         MOVL     head(R7), R6    
+         MOVL     val(R6), R0     ; D0 := value of b
+         CLRL     R1              ; D0,D1 := b
+         EDIV     R2, R0, R2, R0  ; D0 := value of b rem a
+         BVC      10$             
+         EXIT     #rc_divide_zero 
+10$:     RESTORE  <#^M<R2>>       
+         numb     R0              
+;       MOVE.L  new_cell, W_reg
+         MOVL     R12, R3         
+;       cons    W_reg, tail(S_reg)      ; new_cell := ((b|a).S)
+         cons     R3, tail(R7)    
+;       MOVEA.L new_cell, S_reg         ; S := ((b|a).S)
+         MOVL     R12, R7         
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+         END                      
+                                  
+LEQ_M:                            ; instruction #20
+                                  ;
+                                  ;       (a b.S) E (ADD.C) D  ->  ((a<=b).S) E C D
+                                  
+;       MOVEA.L head(S_reg), A0             ; A0 := a
+         MOVL     head(R7), R6    
+         MOVL     val(R6), R0     ; D0 := value of a
+;       tail_pop S_reg                  ; S := tail(S)
+         tail_pop R7              
+;       MOVEA.L head(S_reg), A0             ; A0 := b
+         MOVL     head(R7), R6    
+         CMPL     R0, val(R6)     ; compare a to b (ie. b - a)
+         BGEQ     00$             ; if a <= b
+         MOVAB    F_cell, R6      ; else A0 := F
+         BRB      01$             
+00$:     MOVAB    T_cell, R6      ; A0 := T
+;   $01 cons    A0, tail(S_reg)         ; new_cell := (... .S)
+01$:     cons     R6, tail(R7)    
+;       MOVEA.L new_cell, S_reg         ; S := (... .S)
+         MOVL     R12, R7         
+;       tail_pop C_reg                  ; C := tail(C)
+         tail_pop R10             
+         END                      
+                                  
+STOP_M:                           ; instruction #21
+                                  ;
+                                  ;       (a.S) E (STOP.C) D  ->  (a.S) E (STOP.C) D if a is an atom
+                                  ;       (((c.r).a).S) E (STOP.C) D  ->  NIL (a.r) c (S E (STOP.C).D)
+                                  
+;       MOVEA.L head(S_reg), A0             ; A0 := tos
+         MOVL     head(R7), R6    
+         IF_is_composite (R6), 10$ ; if atom, then halt
+         EXIT     #rc_ok          
+10$:                              
+;       cons_push C_reg, D_reg          ; D := ((STOP.C).D)
+         cons_push R10, R11       
+;       cons_push E_reg, D_reg          ; D := (E (STOP.C).D)
+         cons_push R8, R11        
+;       cons_push tail(S_reg), D_reg    ; D := (S E (STOP.C).D)
+         cons_push tail(R7), R11  
+;       head_pop S_reg                  ; S := ((c.r).a)
+         head_pop R7              
+;       MOVEA.L head(S_reg), C_reg          ; C := (c.r)
+         MOVL     head(R7), R10   
+;       cons    tail(S_reg), tail(C_reg) ; new_cell:= (a.r)
+         cons     tail(R7), tail(R10) 
+;       MOVEA.L new_cell, E_reg         ; E := (a.r)
+         MOVL     R12, R8         
+;       head_pop C_reg                  ; C := c
+         head_pop R10             
+;       MOVEA.L NIL, S_reg              ; S := NIL
+         MOVL     R4, R7          
+         END                      
+                                  
+LDE_M:                            ; instruction #22
+                                  ;
+                                  ;       S E (LDE x.C) D  -> ((recipe x.E).S) E C D
+                                  
+;       tail_pop C_reg                  ; C := (x.C)
+         tail_pop R10             
+;       recipe  head(C_reg), E_reg          ; new_cell := (recipe x.E)
+         recipe   head(R10), R8   
+;       tail_pop C_reg
+         tail_pop R10             
+;       MOVE.L  new_cell, W_reg         ; W := (recipe x.E)
+         MOVL     R12, R3         
+;       cons_push W_reg, S_reg          ; S := ((recipe x.E).S)
+         cons_push R3, R7         
+         END                      
+                                  
+UPD_M:                            ; instruction #23
+                                  ;
+                                  ;       (x.s) e c ((a.S) E C.D)  ->  (a.S) E C D
+                                  ;                       but also, a := x
+                                  
+;       MOVEA.L head(S_reg), A0             ; A0 := x
+         MOVL     head(R7), R6    
+;       MOVEA.L head(D_reg), S_reg          ; S := (a.S)
+         MOVL     head(R11), R7   
+;       MOVEA.L head(S_reg), C_reg          ; C := a
+         MOVL     head(R7), R10   
+;       update  C_reg, A0               ; copy x onto a (corrupts D0, A0, A4)
+         update   R10, R6         
+;       tail_pop D_reg                  ; D := (E C.D)
+         tail_pop R11             
+;       MOVEA.L head(D_reg), E_reg
+         MOVL     head(R11), R8   
+;       tail_pop D_reg                  ; D := (C.D)
+         tail_pop R11             
+;       MOVEA.L head(D_reg), C_reg
+         MOVL     head(R11), R10  
+;       tail_pop D_reg
+         tail_pop R11             
+         END                      
+                                  
+AP0_M:                            ; instruction #24
+                                  ;
+                                  ;       ((rec c.e).S) E (AP0.C) D  ->  NIL e c (((rec c.e).S) E C.D)
+                                  ;       (a.S) E (AP0.C) D  ->  (a.S) E C D if a is not a recipe
+                                  
+;       tail_pop C_reg
+         tail_pop R10             
+;       MOVEA.L head(S_reg), A0             ; A0 := (recipe c.e)
+         MOVL     head(R7), R6    
+         MOVB     (R6), R0        ; D0 := type-byte of (recipe c.e)
+         BICB2    #^C^X03, R0     ; D0 := type of (recipe c.e)
+         CMPB     #recipe_type, R0 
+         BNEQ     99$             
+;       cons_push C_reg, D_reg          ; D := (C.D)
+         cons_push R10, R11       
+;       cons_push E_reg, D_reg          ; D := (E C.D)
+         cons_push R8, R11        
+;       cons_push S_reg, D_reg          ; D := (((recipe c.e).S) E C.D)
+         cons_push R7, R11        
+;       head_pop S_reg                  ; S := (recipe c.e)
+         head_pop R7              
+;       MOVEA.L head(S_reg), C_reg          ; C := c
+         MOVL     head(R7), R10   
+;       MOVEA.L tail(S_reg), E_reg      ; E := e
+         MOVL     tail(R7), R8    
+;       MOVEA.L NIL, S_reg              ; S := NIL
+         MOVL     R4, R7          
+99$:     END                      
+                                  
+READ_M:                           ; instruction #25
+                                  ;
+                                  ;       S E (READ.C) D  ->  (x.S) E C D
+                                  ;
+                                  ; where x is a new s-expression read from the input
+                                  
+;       tail_pop C_reg
+         tail_pop R10             
+         BSBW     get_exp         
+         END                      
+                                  
+PRINT_M:                          ; instruction #26
+                                  ;
+                                  ;       (x.S) E (PRINT.C) D  ->  S E C D
+                                  ;
+                                  ; with the side effect of printing x to the output
+                                  
+;       tail_pop C_reg
+         tail_pop R10             
+;       MOVEA.L head(S_reg), A0             ; A0 := x
+         MOVL     head(R7), R6    
+         BSBW     put_exp         ; print x
+;       tail_pop S_reg
+         tail_pop R7              
+         END                      
+                                  
+CHR_M:                            ; instruction #27
+                                  ;
+                                  ;       (x.S) E (CHR.C) D  ->  (y.S) E C D
+                                  ;
+                                  ; where y is a single character atom the ascii value of which
+                                  ; character is the number value of x
+                                  
+;       tail_pop C_reg
+         tail_pop R10             
+;       MOVEA.L head(S_reg), A0             ; A0 := x
+         MOVL     head(R7), R6    
+;       tail_pop S_reg
+         tail_pop R7              
+         MOVL     val(R6), R0     ; D0 := ival x
+         MOVAB    in_buffer, R6   ; get pointer to next symbol buffer
+         MOVL     in_next_symbol(R6), R6 
+         MOVB     #1., (R6)       ; set length
+         MOVB     R0, <1.+symbol_chars>(R6) ; set first character of symbol
+         BSBW     store_token     ; corrupts D0, loads W_reg with symbol
+;       cons_push W_reg, S_reg          ; S := (y.S)
+         cons_push R3, R7         
+         END                      
+                                  
+;       end of file SECD.MICRO.TEXT
+                                  
+;       file SECD.MC.TEXT
+                                  
+TRAP_M:                           ; instruction executed whenever the C stream is seen to be invalid
+                                  
+         EXIT     #rc_invalid_inst 
+                                  
+                                  
+; control passes to this point when the machine has been properly initialised
+                                  
+execute:                          
+         BSBW     get_exp         ; push primary bootstrap onto S reg
+;       MOVEA.L head(S_reg), C_reg          ; move closure to C reg
+         MOVL     head(R7), R10   
+;       MOVEA.L head(C_reg), C_reg          ; transfer code to C reg
+         MOVL     head(R10), R10  
+;       MOVEA.L NIL, S_reg              ; clear S reg
+         MOVL     R4, R7          
+fetch:                            ; fetch next instruction
+;       MOVEA.L head(C_reg), A0             ; assume head(C) is a number
+         MOVL     head(R10), R6   
+         CASEL    val(R6) , #1, #<max_op_code-1> 
+op_code_table:                    
+555$:                             
+         clabel   LD_M            ;  1: LD
+         clabel   LDC_M           ;  2: LDC
+         clabel   LDF_M           ;  3: LDF
+         clabel   AP_M            ;  4: AP
+         clabel   RTN_M           ;  5: RTN
+         clabel   DUM_M           ;  6: DUM
+         clabel   RAP_M           ;  7: RAP
+         clabel   SEL_M           ;  8: SEL
+         clabel   JOIN_M          ;  9: JOIN
+         clabel   CAR_M           ; 10: CAR
+         clabel   CDR_M           ; 11: CDR
+         clabel   ATOM_M          ; 12: ATOM
+         clabel   CONS_M          ; 13: CONS
+         clabel   EQ_M            ; 14: EQ
+         clabel   ADD_M           ; 15: ADD
+         clabel   SUB_M           ; 16: SUB
+         clabel   MUL_M           ; 17: MUL
+         clabel   DIV_M           ; 18: DIV
+         clabel   REM_M           ; 19: REM
+         clabel   LEQ_M           ; 20: LEQ
+         clabel   STOP_M          ; 21: STOP
+         clabel   LDE_M           ; 22: LDE
+         clabel   UPD_M           ; 23: UPD
+         clabel   AP0_M           ; 24: AP0
+         clabel   READ_M          ; 25: READ
+         clabel   PRINT_M         ; 26: PRINT
+         clabel   CHR_M           ; 27: CHR
+         BRW      TRAP_M          ; instruction out of range
+                                  
+exit_label:                       ; D1 contains return code
+         out_line 0, <"">         
+         MOVAB    rc_mess_table, R7 
+         BSBW     write_indexed   ; write reason for termination
+         out_line 0, <"">         
+	.IF NE	stand_alone
+         MOVAB    out_buffer, R7  ; try closing output stream
+         BSBW     close_output    
+10$:     $EXIT    STSK_SUCCESS$   ; lable allows preprocesser to work
+         .IFF                     
+         RET                      ; return from call of guest
+         .ENDC                    ;   stand_alone
+                                  
+;       end of file SECD.MC.TEXT
+                                  
+                                  
+;       file SECD.MESS.TEXT
+                                  
+         .IF NE   ^Cstand_alone   
+read_serial:                      ; read char from command terminal to D0
+         BRW      pasc_read_serial 
+                                  
+write_serial:                     ; write sized string pointed to by A1 to command terminal
+         BRW      pasc_write_serial 
+         .IFF                     
+read_serial:                      ; reads a character from the standard terminal into the low
+                                  ; byte of D0
+                                  
+         SAVE     <#^M<R6>>       
+         RESTORE  <#^M<R6>>       
+         RSB                      ; return from read_serial
+                                  
+write_serial:                     ; writes a sequence of characters to the standard terminal
+                                  ; A1 points at a byte count which precedes the characters
+                                  
+         SAVE     <#^M<R0,R6,R7>> 
+         RESTORE  <#^M<R0,R6,R7>> 
+         RSB                      ; return from write_serial
+         .ENDC                    
+write_string:                     ; writes an inline sequence of characters to the terminal
+                                  ; and (carefully) adjusts return address
+                                  ; Call is of the form
+                                  ;
+                                  ;               BSR     write_string
+                                  ;              .BYTE    <length>
+                                  ;              .BLOCK   <length>
+                                  ;              .ALIGN   2.
+                                  
+         SAVE     <#^M<R0,R7>>    
+         MOVL     8.(SP), R7      ; get address of string
+         BSBW     write_serial    ; output the characters
+         MOVE_BL  (R7)+, R0       
+         ADDL2    R7, R0          ; point at end of string
+         EVEN_UP  R0              
+         MOVL     R0, 8.(SP)      ; restore return address
+         RESTORE  <#^M<R0,R7>>    
+         RSB                      ; return from write_string
+                                  
+write_indexed:                    ; writes to the D0th entry of the table of strings pointed at
+                                  ; by A1 to the terminal
+                                  ;
+                                  ; the table has the form
+                                  ;
+                                  ;       <word offset of "unexpected value">
+                                  ;       <block of <n> word offsets of strings>
+                                  ; A1 -> <word containing -(n + 1) >
+                                  ;
+                                  ; and is (validly) indexed from -n to -1
+                                  
+         SAVE     <#^M<R0,R1,R7>> 
+	CVTWL	R0, R0
+         CVTWL    (R7), R1        
+         CMPW     R0, R1          
+         BGTRU    10$             
+         CVTWL    R1, R0          ; set default string
+10$:     MOVAW    (R7)[R0], R7    ; pointer to entry
+         CVTWL    (R7), R0        ; get offset of string from table
+         ADDL2    R0, R7          
+         BSBW     write_serial    
+         RESTORE  <#^M<R0,R1,R7>> 
+         RSB                      ; return from write_indexed
+                                  
+	.IF	NE stand_alone
+write_io_result:                  ; writes a message to the terminal describing the io_result
+                                  ; value in D0, and follows this by the constant string which
+                                  ; follows the call
+                                  ;
+                                  ; Call is of the form
+                                  ;
+                                  ;               BSR     write_io_result
+                                  ;              .BYTE    <length>
+                                  ;              .BLOCK   <length>
+                                  ;              .ALIGN   2.
+                                  
+         SAVE     <#^M<R0,R7>>    
+         MOVAB    io_res_messages, R7 
+         BSBW     write_indexed   
+         MOVL     8.(SP), R7      ; get address of string
+         BSBW     write_serial    ; output the characters
+         MOVE_BL  (R7)+, R0       
+         ADDL2    R7, R0          ; point at end of string
+         EVEN_UP  R0              
+         MOVL     R0, 8.(SP)      ; restore return address
+         RESTORE  <#^M<R0,R7>>    
+         RSB                      ; return from write_io_result
+                                  
+	.ENDC
+
+write_question:                   ; Writes an inline sequence of characters to the terminal
+                                  ; and (carefully) adjusts return address. Reads a sequence
+                                  ; of characters from the terminal until one of these is
+                                  ; a "y", "Y", "n", or "N", and returns EQ or NE depending
+                                  ; on whether it is one of the former pair, or of the latter.
+                                  ;
+                                  ; Call is of the form
+                                  ;
+                                  ;               BSR     write_question
+                                  ;              .BYTE    <length>
+                                  ;              .BLOCK   <length>
+                                  ;              .ALIGN   2.
+                                  
+         SAVE     <#^M<R0,R1,R7>> 
+         MOVL     12.(SP), R7     ; get address of string
+         BSBW     write_serial    ; output the characters
+         MOVE_BL  (R7)+, R0       
+         ADDL2    R7, R0          ; point at end of string
+         EVEN_UP  R0              
+         MOVL     R0, 12.(SP)     ; restore return address
+10$:     BSBW     read_serial     
+         CMPB     #<^A"y">, R0    
+         BEQL     20$             
+         CMPB     #<^A"Y">, R0    
+         BEQL     20$             
+         CMPB     #<^A"n">, R0    
+         BEQL     20$             
+         CMPB     #<^A"N">, R0    
+         BNEQ     10$             
+20$:     MOVE_BL  -(R7), R1       
+         MOVAB    100$, R7        
+         SUBL2    #1., R1         
+30$:     BSBW     write_serial    
+         SOBGEQ   R1, 30$         
+         CMPB     #<^A"y">, R0    
+         BEQL     40$             
+         CMPB     #<^A"Y">, R0    
+40$:     RESTORE  <#^M<R0,R1,R7>> 
+         RSB                      ; return from write_question
+                                  
+100$:    .BYTE    3., BS, <^A" ">, BS 
+         ;.ALIGN  2.              
+                                  
+;       end of file SECD.MESS.TEXT
+                                  
+                                  
+;      file SECD.INPUT.TEXT
+                                  
+store_token:                      ; called with the standard SECD machine registers, and with
+                                  ; a new token in the in_next_symbol of the input buffer,
+                                  ; checks that symbol against the symbol table, and enters it
+                                  ; if necessary. Returns with a cell representing the symbol
+                                  ; in the W register, and the constant atomic in D0.
+                                  
+         SAVE     <#^M<R1,R2,R6,R7,R8>> 
+         MOVAB    in_buffer, R8   
+         MOVL     in_next_symbol(R8), R6 
+         MOVAB    symbol_table, R7 
+         MOVE_BL  (R6), R1        ; get length of new symbol
+10$:     CMPB     (R7), R1        ; scan table for earlier symbol
+         BNEQ     30$             ; different length => different symbol
+         MOVL     R1, R0          
+20$:     CMPB     symbol_chars(R7)[R0], symbol_chars(R6)[R0] 
+         BNEQ     30$             
+         SOBGEQ   R0, 20$         
+         CMPL     R6, R7          ; test for new symbol
+         BNEQ     90$             ; if not, then exit
+         ADDL2    #symbol_stride, R6 ; if so, then increment next symbol
+         MOVL     R6, in_next_symbol(R8) 
+         MOVAB    symbol_top, R8  
+         CMPL     R7, R8          ; test for store full
+         BNEQ     90$             ; if not, then exit
+         EXIT     #rc_sym_tab_full 
+30$:     ADDL2    #symbol_stride, R7 ; different, so try next symbol
+         BRB      10$             
+90$:     MOVL     R7, R0          ; address will be used in symbol cell
+         RESTORE  <#^M<R1,R2,R6,R7,R8>> 
+         symb     R0              ; create new symbol cell
+         MOVW     #atomic, R0     ; set result in D0
+;       MOVE.L  new_cell, W_reg         ; and copy cell to W register
+         MOVL     R12, R3         
+         RSB                      ; return from store_symbol
+                                  
+; The get_char routines below are used by get_token to get the next character
+; from the input stream. The effect of a get_char macro is to fetch the next
+; character from the input stream through the buffer in A1 into the low byte
+; of D0
+                                  
+         .IF NE   compact_get     
+                                  
+         .MACRO   get_char        
+         BSBW     get_char_rt     
+         .ENDM                    ;   get_char
+                                  
+get_char_rt:                      ; sets D0 low byte to next character from the input buffer
+	.IF NE	^Cstand_alone
+	BRW	pasc_get_char
+	.IFF
+                                  ; in A1, refilling the buffer if necessary.
+                                  
+         SAVE     <#^M<R6>>       
+         MOVE_WL  in_reader(R7), R0 ; reader pointer
+10$:     CMPW     in_writer(R7), R0 ; compare with writer
+         BNEQ     40$             ; while reader=writer get next buffer
+         MOVL     in_get_buffer(R7), R6 
+         JSB      (R6)            ; call next block routine
+         CLRL     R0              ; reader := 0
+         BRB      10$             
+40$:     ADDL2    #1., R0         ; increment reader
+         MOVW     R0, in_reader(R7) ; save reader
+         MOVB     in_data(R7)[R0], R0 ; read from buffer
+         RESTORE  <#^M<R6>>       
+	.ENDC
+         RSB                      ; return from get_char_rt
+                                  
+         .MACRO   get_tok_start   
+         SAVE     <#^M<R1,R2,R6,R7>> 
+         MOVAB    in_buffer, R7   
+         MOVB     in_char(R7), R0 
+         .ENDM                    ;   get_tok_start
+                                  
+         .MACRO   get_tok_finish  
+         RESTORE  <#^M<R1,R2,R6,R7>> 
+         .ENDM                    ;   get_tok_finish
+                                  
+         .ENDC                    ;   compact_get
+                                  
+         .IF NE   ^Ccompact_get   
+                                  
+         .MACRO   get_char, ?A, ?B, ?D 
+                                  ; leave this line blank: two labels not allowed on one line
+A:       CMPW     R3, R4          ; compare reader and writer
+         BNEQ     D               ; while reader=writer get next buffer
+         PUSHAB   B               
+         PUSH_L   in_get_buffer(R7) 
+         RSB                      ; call next block routine
+B:       CLRL     R3              ; reader := 0
+         MOVE_WL  in_writer(R7), R4 
+         BRB      A               
+D:       ADDL2    #1., R3         ; increment reader
+         MOVB     in_data(R7)[R3], R0 ; read from buffer
+         .ENDM                    ;   get_char
+                                  
+         .MACRO   get_tok_start   
+         SAVE     <#^M<R1,R2,R3,R4,R6,R7>> 
+         MOVAB    in_buffer, R7   
+         MOVB     in_char(R7), R0 ; D0 is first character
+         MOVE_WL  in_reader(R7), R3 
+         MOVE_WL  in_writer(R7), R4 
+         .ENDM                    ;   get_tok_start
+                                  
+         .MACRO   get_tok_finish  
+         MOVW     R3, in_reader(R7) 
+         RESTORE  <#^M<R1,R2,R3,R4,R6,R7>> 
+         .ENDM                    ;   get_tok_finish
+                                  
+         .ENDC                    ;   ~compact_get
+                                  
+get_tok_alpha:                    ; tail of get_token routine
+                                  ; called in case of first character of an alphanumeric token
+                                  
+         MOVL     in_next_symbol(R7), R6 ; A0 gets the next free symbol address
+         MOVL     #1., R1         ; D1 is length, set equal to 1
+gta0:    MOVB     R0, symbol_chars(R6)[R1] ; store character
+gta1:    get_char                 
+get_tok_a1:                       ; entry from get_tok_plus/minus
+         CMPB     #<^A"(">, R0    ; if next char is "("
+         BEQL     50$             ; then done
+         CMPB     #<^A")">, R0    ; if next char is ")"
+         BEQL     50$             ; then done
+         CMPB     #<^A".">, R0    ; if next char is "."
+         BEQL     50$             ; then done
+         CMPB     #<^A" ">, R0    ; if next char is " "
+         BEQL     50$             ; then done
+         CMPB     #symbol_length, R1 ; if length = symbol_length
+         BEQL     gta1            ; then ignore character
+         ADDL2    #1., R1         ; else increment length
+         BRB      gta0            ; and store next character
+50$:     MOVB     R1, (R6)        ; save length
+         MOVB     R0, in_char(R7) ; put back last character
+         get_tok_finish           
+         BRW      store_token     ; return from get_token
+                                  
+get_tok_minus:                    ; tail of get_token routine
+                                  ; called in case of minus sign
+                                  
+         get_char                 ; get first digit
+         CMPB     R0, #<^A"0">    ; if less than "0"
+         BCS      50$             ; then should have been alphanumeric
+         CMPB     R0, #<^A"9">    ; if greater than "9"
+         BGTRU    50$             ; then take alphanumeric
+         MOVW     #-1., R1        ; set sign negative
+         BRB      get_tok_d1      
+50$:     MOVL     #1., R1         ; should have been alphanumeric
+         MOVL     in_next_symbol(R7), R6 ; A0 gets the next free symbol address
+         MOVB     #<^A"-">, <1.+symbol_chars>(R6) ; set first char to "-"
+         BRB      get_tok_a1      ; and treat rest as alphanumerics
+                                  
+get_tok_plus:                     ; tail of get_token routine
+                                  ; called in case of plus sign
+                                  
+         get_char                 ; get first digit
+         CMPB     R0, #<^A"0">    ; if less than "0"
+         BCS      50$             ; then should have been alphanumeric
+         CMPB     R0, #<^A"9">    ; if no more than "9"
+         BGTRU    50$             ; then take alphanumeric
+         CLRL     R1              ; set sign positive
+         BRB      get_tok_d1      
+50$:     MOVL     #1., R1         ; should have been alphanumeric
+         MOVL     in_next_symbol(R7), R6 ; A0 gets the next free symbol address
+         MOVB     #<^A"+">, <1.+symbol_chars>(R6) ; set first char to "+"
+         BRW      get_tok_a1      ; and treat rest as alphanumerics
+                                  
+get_tok_digit:                    ; tail of get_token routine
+                                  ; called in case of initial digit
+                                  
+         CLRL     R1              ; set sign positive
+get_tok_d1:                       ; entry from get_tok_plus/minus
+         BICB2    #^C^X0F, R0     ; mask irrelevant bits of digit
+         MOVE_BL  R0, R2          ; and load accumulator
+10$:     get_char                 ; get next character
+         CMPB     R0, #<^A"0">    ; if less than "0"
+         BCS      20$             ; then done with numeral
+         CMPB     R0, #<^A"9">    ; if greater than "9"
+         BGTRU    20$             ; then done with numeral
+         BICL2    #^C^X0000000F, R0 ; else mask irrelevant bits of digit
+         MULL2    #10., R2        
+	ADDL	R0, R2
+         BRB      10$             
+20$:     MOVB     R0, in_char(R7) ; done: put back last character
+         MOVL     R2, R0          ; Assume positive
+         BLBC     R1, 30$         ; Branch if so
+         MNEGL    R2, R0          ; If not D0 becomes signed result
+30$:                              
+         get_tok_finish           
+         numb     R0              
+         MOVW     #atomic, R0     
+;       MOVE.L  new_cell, W_reg
+         MOVL     R12, R3         
+         RSB                      ; return from get_token
+                                  
+gtbl:    get_char                 
+         BRB      gt0             
+                                  
+gtop:    MOVW     #open_paren, R0 
+         BRB      gt1             
+                                  
+gtcl:    MOVW     #close_paren, R0 
+         BRB      gt1             
+                                  
+gtpt:    MOVW     #point, R0      
+                                  
+gt1:     MOVB     #<^A" ">, in_char(R7) ; put back a space
+         get_tok_finish           
+         RSB                      ; return from get_token
+                                  
+get_token:                        ; called with the standard SECD machine registers,
+                                  ; inputs a token to the next free token location in the symbol
+                                  ; table, from the current input channel, keeps last put back
+                                  ; character in in_char, returns with D0 containing one of
+                                  ;     atomic, open_paren, close_paren, point,
+                                  ; with, in the case of atoms, the address of a cell
+                                  ; representing the atom in the W register
+                                  
+         get_tok_start            
+gt0:     CASEB    R0, #<^A" ">, #25. 
+                                  
+                                  
+bl       =        gtbl - .        ; ignore, as space
+al       =        get_tok_alpha - . ; treat as letter
+dg       =        get_tok_digit - . ; treat as digit
+op       =        gtop - .        ; open parenthesis
+pt       =        gtpt - .        ; point
+cl       =        gtcl - .        ; close parenthesis
+pl       =        get_tok_plus - . ; plus sign
+mi       =        get_tok_minus - . ; minus sign
+                                  
+gtt:     .WORD    bl, al, al, al, al, al, al, al ; sp  !  "  #  $  %  &  '
+         .WORD    op, cl, al, pl, al, mi, pt, al ;  (  )  *  +  ,  -  .  /
+         .WORD    dg, dg, dg, dg, dg, dg, dg, dg ;  0  1  2  3  4  5  6  7
+         .WORD    dg, dg          ;  8  9 
+         BRW      get_tok_alpha              
+                                  
+                                  
+get_exp:                          ; called with the SECD machine standard registers, reads an
+                                  ; s-expression onto the top of the S register
+                                  
+         SAVE     <#^M<R0,R1,R6>> 
+;       cons_push NIL, S_reg
+         cons_push R4, R7         
+         BSBW     get_token       ; D0 := next token
+;       LEA     head(S_reg), A0         ; point A0 at head field of S
+         MOVAB    head(R7), R6    
+         BSBB     10$             ; get an expression into head(A0)
+         RESTORE  <#^M<R0,R1,R6>> 
+         RSB                      ; return from get_exp
+                                  
+10$:                              ; called with SECD machine registers, and
+                                  ; D0 = next token, A0 = destination of result
+                                  ; reads an s-expression into (A0)
+                                  ; may corrupt any of D0-D1/A0
+                                  
+         CMPW     #atomic, R0     ; if exp starts with an atom
+         BNEQ     20$             
+         MOVL     R3, R0          ; then it is an atom
+         BRW      70$             
+                                  
+20$:     CMPW     #open_paren, R0 ; if exp starts open parentheseis
+         BNEQ     50$             ; then it is a list
+         BSBW     get_token       ; skip the open parenthesis
+                                  
+30$:     CMPW     #close_paren, R0 ; if list starts with close parenthesis
+         BNEQ     40$             
+         MOVL     R4, R0          ; then it is NIL
+         BRB      70$             
+                                  
+40$:     cons     R4, R4          ; else read tail of list
+;       MOVE.L  new_cell, D1
+         MOVL     R12, R1         
+         update_ptr R6, R1        
+;       LEA     head(new_cell), A0          ; get destination cell
+         MOVAB    head(R12), R6   
+         PUSH_L   R6              
+         BSBW     10$             ; read its head
+         POPA_L   R6              
+         ADDL2    #<tail-head>, R6 ; and then set up to read its tail
+         BSBW     get_token       
+         CMPW     #point, R0      ; if tail is dotted atom
+         BNEQ     30$             
+         BSBW     get_token       ; then skip point
+         BSBB     10$             ; read the atom
+         BRW      get_token       ; skip close bracket
+                                  ; and return from routine at $10
+                                  
+50$:     CMPW     #close_paren, R0 ; if exp starts with close parenthesis
+         BNEQ     60$             
+         PUSHAB   close_cell      ; then treat this as an atom
+         BRB      65$             
+                                  
+60$:     CMPW     #point, R0      ; if exp starts with a point
+         BNEQ     80$             
+         PUSHAB   point_cell      ; then treat this as an atom
+65$:     POP_L    R0              
+                                  
+70$:     update_ptr R6, R0       ; may corrupt D0
+         RSB                      
+                                  
+80$:     EXIT     #rc_error       
+                                  
+;       end of file SECD.INPUT.TEXT
+                                  
+                                  
+                                  
+;       file SECD.OUTPT.TEXT
+                                  
+         .IF NE   compact_put     
+                                  
+put_char_rt:                      ; outputs character in low byte of D2 to the output stream
+                                  ; in A1, maintaining a column count in the output stream
+                                  
+         .MACRO   put_char, A     
+         .IF      DIF  R2, A      
+         MOVB     #A, R2          
+         .ENDC                    
+         BSBW     put_char_rt     
+         .ENDM                    ;   put_char
+                                  
+         .MACRO   put_buffer, A   
+         MOVW     #A, R0          
+         MOVL     out_put_buffer(R7), R8 
+         JSB      (R8)            
+         .ENDM                    ;   put_buffer
+                                  
+         SAVE     <#^M<R8,R0,R3>> 
+         .IF NE   limit_lines     
+         SUBW2    #1., out_remaining(R7) 
+         .ENDC                    ;   limit_lines
+00$:     MOVE_WL  out_writer(R7), R3 
+         CMPW     out_length(R7), R3 
+         BNEQ     10$             
+         put_buffer pb_full_buffer ; call because no room in buffer
+         BRB      00$             
+10$:     ADDL2    #1., R3         
+         MOVW     R3, out_writer(R7) 
+         MOVB     R2, out_data(R7)[R3] 
+         CMPB     #CR, R2         
+         BNEQ     20$             
+         .IF NE   limit_lines     
+         MOVW     #line_length, out_remaining(R7) 
+         .ENDC                    ;   limit_lines
+         put_buffer pb_full_buffer ; call to send newline to serial line
+20$:     RESTORE  <#^M<R8,R0,R3>> 
+         RSB                      ; return from put_char
+                                  
+         .ENDC                    ;   compact_put
+                                  
+         .IF NE   ^Ccompact_put   
+                                  
+; the put_char macro outputs character in low byte of D2 to the output stream
+; in A1, maintaining a column count in the output stream, and respecting the
+; cacheing of out_writer and out_length in D3 and D4 respectively
+                                  
+         .MACRO   put_char, A, ?B, ?C, ?D 
+         .IF NE   limit_lines     
+         SUBW2    #1., R5         
+         .ENDC                    ;   limit_lines
+B:       CMPW     R4, R3          
+         BNEQ     C               
+         MOVW     R3, out_writer(R7) 
+         put_buffer pb_full_buffer ; call because no room in buffer
+         MOVE_WL  out_writer(R7), R3 
+         BRB      B               
+C:       ADDL2    #1., R3         
+         .IF      IDN  R2, A      
+         MOVB     A, out_data(R7)[R3] 
+         CMPB     #CR, R2         
+         BNEQ     D               
+         .IFF                     
+         MOVB     #A, out_data(R7)[R3] 
+         .ENDC                    ;   D2 <> A
+         .IF      DIF  space, A   
+         .IF NE   limit_lines     
+         MOVW     #line_length, R5 
+         .ENDC                    ;   limit_lines
+         MOVW     R3, out_writer(R7) 
+         put_buffer pb_full_buffer ; call to send newline to serial line
+         MOVE_WL  out_writer(R7), R3 
+D:                                
+         .ENDC                    ;   space <> A
+         .ENDM                    ;   put_char
+                                  
+         .MACRO   put_buffer, A   
+         MOVW     #A, R0          
+         MOVL     out_put_buffer(R7), R8 
+         JSB      (R8)            
+         .ENDM                    ;   put_buffer
+                                  
+         .ENDC                    ;   ~compact_put
+                                  
+put_token:                        ; outputs a token, pointed at by A0, to the current output
+                                  ; channel, breaking the line when the token will not fit
+                                  
+         .IF NE   compact_put     
+         SAVE     <#^M<R0,R1,R2,R6,R7,R8>> 
+         MOVAB    out_buffer, R7  
+         .IFF                     
+         .IF NE   limit_lines     
+         SAVE     <#^M<R0,R1,R2,R3,R4,R5,R6,R7,R8>> 
+         .IFF                     
+         SAVE     <#^M<R0,R1,R2,R3,R4,R6,R7,R8>> 
+         .ENDC                    ;   ~limit_lines
+         MOVAB    out_buffer, R7  
+         MOVE_WL  out_writer(R7), R3 
+         MOVE_WL  out_length(R7), R4 
+         .IF NE   limit_lines     
+         MOVW     out_remaining(R7), R5 
+         .ENDC                    ;   limit_lines
+         .ENDC                    ;   ~compact_put
+         MOVE_BW  (R6)+, R1       ; D1 := length(token)
+         .IF NE   limit_lines     
+         .IF NE   compact_put     
+         CMPW     R1, out_remaining(R7) 
+         .IFF                     
+         CMPW     R1, R5          
+         .ENDC                    ;   ~compact_put
+         BCS      05$             ; if sufficient room, then ok
+         put_char CR              ; else, break line
+05$:                              
+         .ENDC                    ;   limit_lines
+10$:     SUBW2    #1., R1         
+         BLSS     20$             ; for D1 := length downto 1 do
+         MOVB     (R6)+, R2       
+         CMPB     #space, R2      ;     if next char <> " "
+         BEQL     10$             
+         put_char R2              ;         then print char
+         BRB      10$             
+20$:     put_char space           
+	.IF NE	^Ccompact_put
+         MOVW     R3, out_writer(R7) 
+	.ENDC
+         put_buffer pb_full_buffer ; call to let characters out
+         .IF NE   compact_put     
+         RESTORE  <#^M<R0,R1,R2,R6,R7,R8>> 
+         .IFF                     
+         .IF NE   limit_lines     
+         MOVW     R5, out_remaining(R7) 
+         RESTORE  <#^M<R0,R1,R2,R3,R4,R5,R6,R7,R8>> 
+         .IFF                     
+         RESTORE  <#^M<R0,R1,R2,R3,R4,R6,R7,R8>> 
+         .ENDC                    ;   ~limit_lines
+         .ENDC                    ;   ~compact_put
+         RSB                      ; return from put_token
+                                  
+num_to_string:                    ; unfolds the numeral in D0 into the symbol pointed at by A0
+                                  
+         SAVE     <#^M<R0,R1,R2,R3>> ; write digits
+         MOVL     #0., R3         ; D1 is length
+         TSTL     R0              
+         BGEQ     10$             ; if D0 < 0 then
+         MOVL     #1., R3         
+         MOVB     #<^A"-">, <1.+symbol_chars>(R6) ; start with minus sign
+         MNEGL    R0,R0           ; and take absolute value
+10$:     BSBB     20$             ; print positive                      
+         MOVB     R3, (R6)        ; set length
+         RESTORE  <#^M<R0,R1,R2,R3>> 
+         RSB                      ; return from num_to_string
+                                  
+20$:                              ; unfold positive D0, corrupts D0-D2
+         CLRL     R1              
+         EDIV     #10., R0, R0, R2 ; D2 := (D0 rem 10)
+                                  ; D0 := (D0 div 10)
+         ADDB2    #<^A"0">, R2    
+         TSTL     R0              
+         BEQL     25$             
+         PUSH_W   R2              
+         BSBB     20$             ; then unfold D0
+         POP_W    R2              
+25$:     ADDL2    #1., R3         
+         MOVB     R2, symbol_chars(R6)[R3] 
+         RSB                      ; return from $20 in num_to_string
+                                  
+put_exp:                          ; sends the s-expression pointed at by A0, to the standard
+                                  ; output channel
+                                  
+         SAVE     <#^M<R0,R1,R6,R7>> 
+         MOVL     <val+nil_cell>, R1 
+         MOVL     R6, R7          
+         BSBB     00$             
+         RESTORE  <#^M<R0,R1,R6,R7>> 
+         RSB                      ; return from put_exp
+                                  
+00$:                              ; put_exp A1, but corrupting D0/A0-A1, and assuming D1 = val(nil_cell)
+                                  
+         MOVB     (R7), R0        ; get type of A1
+         BICB2    #^C^X03, R0     ; mask to type bits
+         CMPB     #cons_type, R0  
+         BEQL     10$             ; if cons
+         CMPB     #recipe_type, R0 
+         BEQL     20$             
+         CMPB     #numb_type, R0  
+         BEQL     30$             
+         CMPB     #symb_type, R0  
+         BEQL     40$             
+         EXIT     #rc_error       
+                                  
+10$:                              ; put_exp of a cons
+                                  
+         MOVAB    open_symbol, R6 ; put token "("
+         BSBW     put_token       
+12$:     PUSH_L   R7              
+         head_pop R7              
+         BSBW     00$             ; put exp (head A1)
+         POPA_L   R7              
+         tail_pop R7              
+         MOVB     (R7), R0        
+         BICB2    #^Ctype_mask, R0 ; get type of tail
+         CMPB     #cons_type, R0  
+         BEQL     12$             ; if another cons, then loop
+         CMPB     #symb_type, R0  
+         BNEQ     15$             ; if not symbol, then not NIL
+         CMPL     val(R7), R1     
+         BEQL     17$             ; if NIL, then don't print it
+15$:     MOVAB    point_symbol, R6 ; put token "."
+         BSBW     put_token       
+         BSBW     00$             ; put out atom in tail
+17$:     MOVAB    close_symbol, R6 ; put token ")"
+         BRW      put_token       
+                                  ; and return from put_exp
+                                  
+20$:                              ; put_exp of a recipe
+                                  
+         MOVAB    recipe_symbol, R6 ; put token "*RECIPE*"
+         BRW      put_token       
+                                  ; and return from put_exp
+                                  
+30$:                              ; put_exp of a number
+                                  
+         MOVL     val(R7), R0     ; get ival
+         MOVAB    digit_buffer, R6 
+         BSBW     num_to_string   ; translate into a token
+         BRW      put_token       ; and output it
+                                  ; and return from put_exp
+                                  
+40$:                              ; put_exp of a symbol
+                                  
+         MOVL     val(R7), R6     ; get sval of A0
+         BRW      put_token       ; output it as a symbol
+                                  ; and return from call of put_exp
+                                  
+	.IF NE	stand_alone
+close_output:                     ; closes the output stream in A1
+                                  
+         SAVE     <#^M<R0,R6,R7>> 
+         MOVW     #pb_close_file, R0 ; close currently open file
+         MOVAB    out_buffer, R7  
+         MOVL     out_put_buffer(R7), R6 
+         JSB      (R6)            
+         MOVAB    put_new_file, R6 ; and set up to open new file
+         MOVL     R6, out_put_buffer(R7) 
+         RESTORE  <#^M<R0,R6,R7>> 
+         RSB                      ; return from close_output
+	.ENDC
+                                  
+;       end of file SECD.OUTPT.TEXT
+                                  
+                                  
+                                  
+;       file SECD.DATA.TEXT
+                                  
+                                  
+;       termination messages
+                                  
+rc_m01:  STRING   32., <"SECD machine terminated normally"> ; rc_ok
+rc_m02:  STRING   28., <"ERROR: symbol store overflow"> ; rc_sym_tab_full
+rc_m03:  STRING   26., <"ERROR: cell store overflow"> ; rc_cell_store_full
+rc_m04:  STRING   32., <"ERROR: attempt to divide by zero"> ; rc_divide_zero
+rc_m05:  STRING   31., <"ERROR: invalid SECD instruction"> ; rc_invalid_inst
+rc_m06:  STRING   37., <"ERROR: unspecified SECD machine error"> ; rc_error
+                                  
+         .IF NE   stand_alone     
+rc_m07:  STRING   24., <"SECD machine interrupted"> ; rc_break
+         .IFF                     
+rc_m07:  STRING   32., <"This program requires a RAM disk"> ; rc_no_ram_disk
+         .ENDC                    
+                                  
+200$:    STRING   36., <"ERROR: unexpected SECD machine error"> 
+                                  
+         ;.ALIGN  2.              
+         label    200$            
+         label    rc_m07          
+         label    rc_m06          
+         label    rc_m05          
+         label    rc_m04          
+         label    rc_m03          
+         label    rc_m02          
+         label    rc_m01          
+rc_mess_table:                    
+         .WORD    rc_min - 1.     
+                                  
+                                  
+;       declaration of variables
+                                  
+         .PSECT   SECDVARS,QUAD,NOEXE 
+first_variable =  .               
+                                  
+         ;.ALIGN  2.              
+store_base: .BLKB 4.              ; bottom of heap
+save_argpt: .BLKB 4.              ; stack mark for long jumps
+                                  
+         .BLKB    in_file_length  ; input file
+         ;.ALIGN  2.              
+in_buffer: .BLKB  in_extra + block_length ; and its buffer
+                                  
+         .BLKB    out_file_length ; output file
+         ;.ALIGN  2.              
+out_buffer: .BLKB out_extra + block_length ; and its buffer
+                                  
+         ;.ALIGN  2.              
+nil_cell: .BLKB   cell_size       
+T_cell:  .BLKB    cell_size       
+F_cell:  .BLKB    cell_size       
+point_cell: .BLKB cell_size       
+close_cell: .BLKB cell_size       
+                                  
+digit_buffer: .BLKB symbol_stride ; buffer for number output
+                                  
+open_symbol: symbol 1., <^A"(">   ; symbols not in table
+recipe_symbol: symbol 8., <".RECIPE."> 
+                                  
+nil_symbol: symbol 3., <"NIL">    ; constant symbols in table
+T_symbol: symbol  1., <^A"T">     
+F_symbol: symbol  1., <^A"F">     
+close_symbol: symbol 1., <^A")">  
+point_symbol: symbol 1., <^A".">  
+                                  
+symbol_table =    nil_symbol      
+first_free_symb = .               
+                                  
+         .IF NE   stand_alone     
+                                  
+         OFF_EVEN symbol_top,first_free_symb,<numb_symbols * symbol_stride> 
+last_variable =   symbol_top      
+                                  
+         .IFF                     
+                                  
+         .BLKB    <numb_symbols * symbol_stride> 
+symbol_top =      .               
+         ;.ALIGN  2.              
+last_variable =   .               
+                                  
+         .ENDC                    
+                                  
+         .PSECT   GUEST           
+                                  
+;       end of file SECD.DATA.TEXT
+                                  
+                                  
+                                  
+         ;.ALIGN  2.              
+;       file SECD.INIT.TEXT
+                                  
+initialisation:                   
+                                  
+         .IF NE   stand_alone     
+                                  ; code which follows this label may
+                                  ; be overwritten by the heap/stack
+         .IFF                     
+         MOVL     AP, save_argpt  ; So we can get at io routine
+         .ENDC                    ;   stand_alone
+                                  
+;       read details of the environment from the p-machine stack
+                                  
+                                  
+;       announce and describe machine
+                                  
+         out_string 13., <"SECD machine "> 
+         out_string 0.            
+         .BYTE    2., version, sub_version 
+         ;.ALIGN  2.              
+         out_line 34., <" implementation for the Vax (test)"> 
+         .IF NE   announce        
+                                  
+         .IF NE   recursive       
+         out_string 14., <"Recursive mark"> 
+         .IFF                     
+         out_string 14., <"Iterative mark"> 
+         .ENDC                    ;   recursive
+                                  
+         .IF NE   gc_count        
+         out_string 14., <" with messages"> 
+         .IFF                     
+         .IF NE   screen_led      
+         out_string 27., <" denoted by flash on screen"> 
+         .ENDC                    
+         .ENDC                    
+                                  
+         out_line 2., <". ">      
+                                  
+         .IF NE   compact_cons    
+         out_string 17., <"Compact CONS code"> 
+         .IFF                     
+         out_string 14., <"Fast CONS code"> 
+         .ENDC                    
+                                  
+         .IF NE   compact_get     
+         out_string 20., <", compact input code"> 
+         .IFF                     
+         out_string 17., <", fast input code"> 
+         .ENDC                    
+                                  
+         .IF NE   compact_put     
+         out_string 21., <", compact output code"> 
+         .IFF                     
+         out_string 18., <", fast output code"> 
+         .ENDC                    
+                                  
+         out_line 2., <". ">      
+                                  
+         .IF NE   stand_alone     
+         out_string 20., <"Discarding p-machine"> 
+         .IFF                     
+         out_string 19., <"Retaining p-machine"> 
+         .ENDC                    
+                                  
+         .IF NE   ^Cdisk_writes   
+         out_string 40., <", BREAKing before deliberate disk writes"> 
+         .ENDC                    
+                                  
+         out_line 2., <". ">      
+                                  
+         .ENDC                    ; announce
+                                  
+;       relocate permanent code
+                                  
+         .IF NE   stand_alone     
+         BSBW     relocate        ; no absolute addresses created
+                                  ; before this point will be correct
+                                  ; after this call; also note that
+                                  ; return from relocate is not via SP!
+         .ENDC                    ;   stand_alone
+                                  
+                                  
+;       initialise the terminal channel and terminal interrupt
+                                  
+;       initialise the input stream
+                                  
+         MOVAB    in_buffer, R7   
+         MOVW     #block_length, in_length(R7) 
+         CLRW     in_reader(R7)   
+         CLRW     in_writer(R7)   
+                                  
+         MOVAB    first_free_symb, R8 ; next symbol := first symbol in table
+         MOVL     R8, in_next_symbol(R7) 
+         MOVB     #<^A" ">, in_char(R7) ; put back a space as the first char
+                                  
+         .IF NE   stand_alone     
+         MOVAB    22$, R6         ; and copy up second component
+         MOVE_BL  (R6), R0        
+         MOVAB    <fn_first_name+fn_stride>(R8), R10 
+20$:     MOVB     (R6)+, (R10)+   
+         SOBGEQ   R0, 20$         
+         MOVAB    get_new_file, R10 ; default in_get_buffer routine
+         MOVL     R10, in_get_buffer(R7) ; to open new input stream
+         BSBW     open_read_file  
+         TSTL     R0              ; if succeeded, then leave input
+         BEQL     23$             ; set up to come from this file
+         out_line 30., <"No bootstrap file (*SECD.BOOT)"> 
+         BRB      23$             
+22$:     STRING   9., <"SECD.BOOT"> 
+         ;.ALIGN  2.              
+23$:                              
+         .ENDC                    
+                                  
+;       initialises the output stream
+                                  
+         MOVAB    out_buffer, R7  
+         MOVW     #block_length, out_length(R7) 
+         CLRW     out_writer(R7)  
+         .IF NE   limit_lines     
+         MOVW     #line_length, out_remaining(R7) 
+         .ENDC                    ;   limit_lines
+         .IF NE   stand_alone     
+         MOVAB    put_new_file, R8 
+         MOVL     R8, out_put_buffer(R7) 
+         MOVAB    27$, R8         
+         BSBW     open_write_file 
+         BRB      29$             
+27$:     STRING   7., <"CONSOLE"> ; Initial output file
+         ;.ALIGN  2.              
+29$:                              
+	.IFF
+	MOVL	#pasc_doblock_rt, out_put_buffer(R7)
+         .ENDC                    
+                                  
+;       find bounds of the heap
+                                  
+         SUBL2    #<2.*cell_size>, SP ; allow top cell to be above to
+                                  ; address
+         MOVL     SP, R5          
+         EVEN_DN  R5              ; round top of heap down to word
+         SUBL2    #<numb_cells*cell_size>, SP ; place heap in stack frame
+         MOVL     SP, R0          ; for adjustment
+         EVEN_UP  R0              ; round bottom of heap up to word
+         SUBL2    #cell_size, R0  ; address, and back off from first cell
+;       MOVE.L  D0, store_base          ; set variable to base of store
+         MOVAB    store_base, R7  ; ???? MOVE.L D0, store_base does not
+         MOVL     R0, (R7)        ;      assemble on 68000
+;       MOVE.L  D0, new_cell            ; set next free cell register
+         MOVL     R0, R12         
+         SUBL2    #<2.*cell_size>, SP ; dont trust any hand done sums
+                                  ; so more unused space
+;       construct constant symbols
+                                  
+         MOVAB    T_symbol, R7    
+         MOVAB    T_cell, R6      ; make cell for T
+         set_atom #<mark_bit!symb_type>, R6, R7 
+         MOVAB    F_symbol, R7    
+         MOVAB    F_cell, R6      ; make cell for F
+         set_atom #<mark_bit!symb_type>, R6, R7 
+         MOVAB    point_symbol, R7 
+         MOVAB    point_cell, R6  ; make cell for point
+         set_atom #<mark_bit!symb_type>, R6, R7 
+         MOVAB    close_symbol, R7 
+         MOVAB    close_cell, R6  ; make cell for close
+         set_atom #<mark_bit!symb_type>, R6, R7 
+         MOVAB    nil_symbol, R7  
+         MOVAB    nil_cell, R6    ; make cell for NIL
+         set_atom #<mark_bit!symb_type>, R6, R7 
+                                  
+;       initialise SECD machine registers
+                                  
+         MOVL     R6, R4          
+;       MOVEA.L NIL, S_reg
+         MOVL     R4, R7          
+;       MOVEA.L NIL, E_reg
+         MOVL     R4, R8          
+;       MOVEA.L NIL, C_reg
+         MOVL     R4, R10         
+;       MOVEA.L NIL, D_reg
+         MOVL     R4, R11         
+         MOVL     R4, R3          
+                                  
+         BRW      execute         ; load bootstrap and run
+                                  
+                                  
+;       end of file SECD.INIT.TEXT
+                                  
+                                  
+                                  
+                                  
+;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;                                                                    ;
+; Vax dependent I/O for the secd machine                             ;
+;                                                                    ;
+;  Two forms are provided one using a pascal host to do the I/O the  ;
+;  other interfaces directly RMS - the VaxVMS record management      ;
+;  system.                                                           ;
+;                                                                    ;
+;  The form selected is determined by the switch standalone          ;
+;     on implies RMS, off implies use pascal routines                ;
+;                                                                    ;
+;  if not standalone it is assumed pascal definions of the form      ;
+;  procedure secdmc(procedure getdatachar(var ch:char);              ;
+;                   procedure putdatachar(ch:char);                  ;
+;                   procedure getcommandchar(var ch:char);           ;
+;                   procedure putcommandchar(ch:char));external;     ;
+;                                                                    ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;
+                                  
+         .IF NE   stand_alone     
+         .IFF                     
+         .MACRO   PASCAL, A        ; Calls the pascal routine which was the Ath
+                                  ; Argument to original call with TOS as
+                                  ; argument B = on if to be var type
+         SAVE     <#^M<R0,R1>>    ; vax calling sequence leaves unprotected
+         PUSHAB   8.(SP)          ; pointer to arg - old top of stack
+         MOVL     save_argpt,R0   
+         MOVQ     @<4*A>(R0),R0	; R0 = @routine entry R1 = static chain   
+         CALLS  #1, (R0)        ; Call requested pascal routine
+         RESTORE  <#^M<R0,R1>>    
+         .ENDM                    
+                                  
+pasc_diblock_rt:                  ; routine to be used as in_get_buffer
+         CLRL     R0              
+         PUSHL    R0              ; to receive data from pascal rt
+         MOVW     R0, in_reader(R7) ; zero reader
+         INCL     R0              ; assume input char
+         MOVW     R0, in_writer(R7) ; so set writer
+         PASCAL   1               
+         POPL     R0              ; char read
+         MOVB     R0, <in_data+1>(R7) 
+         RSB                      ; block now non-empty
+                                  
+pasc_get_char:                    ; routine that could be used in place of
+                                  ; get_char
+         PUSHL    R0              ; to receive data from pascal rt
+         PASCAL   1               
+         POPL     R0              ; char read
+         RSB                      ; block remains empty
+                                  
+pasc_doblock_rt:                  ; routine to be used as out_put_buffer
+         SAVE     <#^M<R2,R3>>    
+         MOVAB    <out_data+1>(R7), R3 ; pointer to chars
+         MOVZWL   out_writer(R7), R2 ; Count of chars to send
+         BEQL     20$             
+10$:     MOVZBL   (R3)+,-(SP)     ; param to pascal
+         PASCAL   2               
+         ADDL2    #4,SP           ; restore stack
+         SOBGTR R2,10$          
+	CLRW	out_writer(R7)
+20$:     RESTORE  <#^M<R2,R3>>    
+         RSB                      
+                                  
+pasc_write_serial:                ; routine to be used as write_serial
+                                  ; string to console
+         SAVE     <#^M<R2,R7>>    
+         MOVZBL   (R7)+, R2       ; Count of chars to send
+         BEQL     20$             
+10$:     MOVZBL   (R7)+,-(SP)     ; param to pascal
+         PASCAL   4               
+         ADDL2    #4,SP           ; restore stack
+         SOBGTR R2,10$          
+20$:     RESTORE  <#^M<R2,R7>>    
+         RSB                      
+                                  
+pasc_read_serial:                 ; routine to be used read_serial
+                                  ; char from console to D0
+         PUSHL    R0              ; to receive data from pascal rt
+         PASCAL   3               
+         POPL     R0              ; char read
+         RSB                      ; block remains empty
+                                  
+         .ENDC                    
+                                  
+                                  
+         .END                     
+                                  
+                                  
+                                  

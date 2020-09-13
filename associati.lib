@@ -1,0 +1,8 @@
+((domain lambda(a)(if(atom a)(quote NIL)(cons(head(head a))(domain(tail
+a)))))(defined lambda(e a)(unless(atom a)(or(eq(head(head a))e)(defined
+e(tail a)))))(associate lambda(e a)(if(eq(head(head a))e)(tail(head a))
+(associate e(tail a))))(bind lambda(e d a)(cons(cons e d)a))(unbind letrec
+(lambda(e a)(if(defined e a)(u e a)a))(u lambda(e a)(if(eq(head(head a)
+)e)(tail a)(cons(head a)(u e(tail a))))))(update letrec(lambda(a e d)(if
+(defined e a)(u e d a)(bind e d a)))(u lambda(e d a)(if(eq(head(head a)
+)e)(cons(cons e d)(tail a))(cons(head a)(u e d(tail a)))))))

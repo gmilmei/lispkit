@@ -1,0 +1,633 @@
+;       file SECD.MICRO.TEXT
+
+LD_M    ; instruction #1
+        ;
+        ;       S E (LD (a.b).C) D  ->  (x.S) E C D
+        ;
+        ; where x is the b'th element of the a'th element of E
+
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+;       MOVEA.L (C_reg), A0             ; A0 := (a.b)
+        MOVEA.L (A4), A0
+        PUSH_L  A0
+        head_pop A0
+        MOVE.L  val(A0), D0             ; D0 := a
+        POPA_L  A0
+        tail_pop A0
+        MOVE.L  val(A0), D1             ; D1 := b
+;       MOVEA.L E_reg, A0               ; A0 := E
+        MOVEA.L A2, A0
+    $00 SUBQ.L  #1., D0
+        BMI.S   $01                     ; if a = 0 then done, else
+        tail_pop A0                     ;   A0 := tail(A0)
+        BRA.S   $00                     ;         a times
+    $01 head_pop A0                     ; A0 := head(A0)
+    $02 SUBQ.L  #1., D1
+        BMI.S   $03                     ; if b = 0 then done, else
+        tail_pop A0                     ;   A0 := tail(A0)
+        BRA.S   $02                     ;        b times
+    $03 MOVE.L  (A0), W_reg             ; W := head(A0)
+;       cons_push W_reg, S_reg          ; S := (x.S)
+        cons_push W_reg, A1
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+        END
+                                        
+LDC_M   ; instruction #2
+        ;
+        ;       S E (LD c.C) D  ->  (c.S) E C D
+
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+;       MOVE.L  (C_reg), W_reg          ; W := c
+        MOVE.L  (A4), W_reg
+;       cons_push W_reg, S_reg          ; S := (c.S)
+        cons_push W_reg, A1
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+        END
+
+LDF_M   ; instruction #3
+        ;
+        ;       S E (LDF c.C) D  ->  ((c.E).S) E C D
+
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+;       cons    (C_reg), E_reg
+        cons    (A4), A2
+;       MOVE.L  new_cell, W_reg         ; W := (c.E)
+        MOVE.L  A6, W_reg
+;       cons_push W_reg, S_reg          ; S := ((c.E).S)
+        cons_push W_reg, A1
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+        END
+
+AP_M    ; instruction #4
+        ;
+        ;       ((c.r) a.S) E (AP.C) D  ->  NIL (a.r) c (S E C.D)
+
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+;       cons_push C_reg, D_reg
+        cons_push A4, A5
+;       cons_push E_reg, D_reg          ; D := (E C.D)
+        cons_push A2, A5
+;       MOVEA.L (S_reg), C_reg          ; C := (c.r)
+        MOVEA.L (A1), A4
+;       tail_pop S_reg                  ; S := (a.S)
+        tail_pop A1
+;       cons_push tail(S_reg), D_reg    ; D := (S E C.D)
+        cons_push tail(A1), A5
+;       cons    (S_reg), tail(C_reg)    ; new_cell := (a.r)
+        cons    (A1), tail(A4)
+;       MOVEA.L new_cell, E_reg         ; E := (a.r)
+        MOVEA.L A6, A2
+;       MOVEA.L (C_reg), C_reg          ; C := c
+        MOVEA.L (A4), A4
+;       MOVEA.L NIL, S_reg              ; S := NIL
+        MOVEA.L NIL, A1
+        END
+
+RTN_M   ; instruction #5
+        ;
+        ;       (a.s) e (RTN.c) (S E C.D)  ->  (a.S) E C D
+
+;       cons    (S_reg), (D_reg)        ; new_cell := (a.S)
+        cons    (A1), (A5)
+;       MOVEA.L new_cell, S_reg         ; S := (a.S)
+        MOVEA.L A6, A1
+;       tail_pop D_reg                  ; D := (E C.D)
+        tail_pop A5
+;       MOVEA.L (D_reg), E_reg
+        MOVEA.L (A5), A2
+;       tail_pop D_reg                  ; D := (C.D)
+        tail_pop A5
+;       MOVEA.L (D_reg), C_reg
+        MOVEA.L (A5), A4
+;       tail_pop D_reg
+        tail_pop A5
+        END
+
+DUM_M   ; instruction #6
+        ;
+        ;       S E (DUM.C) D  ->  S (NIL.E) C D
+
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+;       cons_push NIL, E_reg            ; E := (NIL.E)
+        cons_push NIL, A2
+        END
+
+RAP_M   ; instruction #7
+        ;
+        ;       ((c.(x.e)) q.S) (r.E) (RAP.C) D  ->  NIL (q.e) c (S E C.D)
+
+;       cons_push tail(C_reg), D_reg    ; D := (C.D)
+        cons_push tail(A4), A5
+;       cons_push tail(E_reg), D_reg    ; D := (E C.D)
+        cons_push tail(A2), A5
+;       MOVEA.L (S_reg), C_reg          ; C := (c.(x.e))
+        MOVEA.L (A1), A4
+;       tail_pop S_reg
+        tail_pop A1
+;       MOVEA.L tail(C_reg), E_reg      ; E := (x.e)
+        MOVEA.L tail(A4), A2
+;       head_pop C_reg                  ; C := c
+        head_pop A4
+;       MOVE.L  (S_reg), D0             ; D0 := q
+        MOVE.L  (A1), D0
+;       update_head E_reg, D0           ; E := (q.e)
+        update_head A2, D0
+;       tail_pop S_reg
+        tail_pop A1
+;       cons_push S_reg, D_reg          ; D := (S E C.D)
+        cons_push A1, A5
+;       MOVEA.L NIL, S_reg              ; S := NIL
+        MOVEA.L NIL, A1
+        END
+
+SEL_M   ; instruction #8
+        ;
+        ;       (T.S) E (SEL t e.j) D  ->  S E t (j.D)
+        ;       (x.S) E (SEL t e.j) D  ->  S E e (j.D)  unless x = T
+
+;       tail_pop C_reg                  ; C := (t e.j)
+        tail_pop A4
+;       MOVEA.L tail(C_reg), A0         ; A0 := (e.j)
+        MOVEA.L tail(A4), A0
+        MOVE.L  tail(A0), D1            ; D1 := j
+;       cons_push D1, D_reg             ; D := (j.D)
+        cons_push D1, A5
+;       MOVEA.L (S_reg), A0
+        MOVEA.L (A1), A0
+;       tail_pop S_reg
+        tail_pop A1
+        MOVE.L  <val+T_cell>, D0        ; D0 := T as a symbol
+        MOVE.L  val(A0), D1             ; compare symbol values for equality
+        EOR.L   D1, D0
+;       ANDI.L  #00FFFFFFH, D0
+       .WORD 0280H, 00FFH, 0FFFH
+        BNE.S   $00                     ; if these are different, then not T
+        MOVE.B  (A0), D0                ; check is of type symbol
+        EORI.B  #symb_type, D0
+        ANDI.B  #type_mask, D0          ; and ignore irrelevant bits
+        BEQ.S   $10
+;   $00 tail_pop C_reg                  ; C := (e.j)
+    $00 tail_pop A4
+;   $10 head_pop C_reg
+    $10 head_pop A4
+        END
+
+JOIN_M  ; instruction #9
+        ;
+        ;       S E (JOIN.C) (c.D)  ->  S E c D
+
+;       MOVEA.L (D_reg), C_reg
+        MOVEA.L (A5), A4
+;       tail_pop D_reg
+        tail_pop A5
+        END
+
+CAR_M   ; instruction #10
+        ;
+        ;       ((a.b).S) E (CAR.C) D   ->  (a.S) E C D
+
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+;       MOVEA.L (S_reg), A0             ; A0 := (a.b)
+        MOVEA.L (A1), A0
+        MOVE.L  (A0), D1                ; D1 := a
+;       cons    D1, tail(S_reg)         ; new_cell := (a.S)
+        cons    D1, tail(A1)
+;       MOVEA.L new_cell, S_reg         ; S := (a.S)
+        MOVEA.L A6, A1
+        END
+
+CDR_M   ; instruction #11
+        ;
+        ;       ((a.b).S) E (CDR.C) D   ->  (b.S) E C D
+
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+;       MOVEA.L (S_reg), A0             ; A0 := (a.b)
+        MOVEA.L (A1), A0
+        MOVE.L  tail(A0), D1            ; D1 := b
+;       cons    D1, tail(S_reg)         ; new_cell := (b.S)
+        cons    D1, tail(A1)
+;       MOVEA.L new_cell, S_reg         ; S := (b.S)
+        MOVEA.L A6, A1
+        END
+
+ATOM_M  ; instruction #12
+        ;
+        ;       (a.S) E (ATOM.C) D       ->  (T.S) E C D
+        ;       ((a.b).S) E (ATOM.C) D   ->  (F.S) E C D
+
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+;       MOVEA.L (S_reg), A0             ; A0 := a, or (a.b)
+        MOVEA.L (A1), A0
+        IF_is_atom (A0), $00
+        LEA     F_cell, A0              ; D1 := F
+        BRA.S   $01
+    $00 LEA     T_cell, A0              ; D1 := T
+;   $01 cons    A0, tail(S_reg)         ; new_cell := (TorF.S)
+    $01 cons    A0, tail(A1)
+;       MOVEA.L new_cell, S_reg         ; S := (... .S)
+        MOVEA.L A6, A1
+        END
+
+CONS_M  ; instruction #13
+        ;
+        ;       (a b.S) E (CONS.C) D  ->  ((a.b).S) E C D
+
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+;       cons    (S_reg), nothing        ; new_cell := (a.?)
+        cons    (A1), NIL
+;       tail_pop S_reg                  ; S := (b.S)
+        tail_pop A1
+;       set_tail new_cell, (S_reg)      ; new_cell := (a.b)
+        set_tail A6, (A1)
+;       MOVE.L  new_cell, W_reg         ; W := (a.b)
+        MOVE.L  A6, W_reg
+;       cons    W_reg, tail(S_reg)      ; new_cell := ((a.b).S)
+        cons    W_reg, tail(A1)
+;       MOVEA.L new_cell, S_reg         ; S := ((a.b).S)
+        MOVEA.L A6, A1
+        END
+
+EQ_M    ; instruction #14
+        ;
+        ;       (a a.S) E (EQ.C) D  ->  (T.S) E C D
+        ;       (a b.S) E (EQ.C) D  ->  (F.S) E C D     if a <> b
+
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+;       MOVEA.L (S_reg), A0             ; A0 := a
+        MOVEA.L (A1), A0
+        MOVE.B  (A0), D0                ; type of a
+        MOVE.L  val(A0), D1             ; value of a
+;       tail_pop S_reg                  ; S := tail(S)
+        tail_pop A1
+;       MOVEA.L (S_reg), A0             ; A0 := b
+        MOVEA.L (A1), A0
+        MOVE.L  val(A0), D2
+        EOR.L   D2, D1                  ; compare for equal values
+        BEQ.S   $10                     ; if same, compare types
+        IF_is_number D0, $01
+;       ANDI.L  #00FFFFFFH, D1          ; addresses are only 24 bit significant
+       .WORD 0281H, 00FFH, 0FFFFH
+        BNE.S   $01                     ; if different, then not EQ
+    $10 MOVE.B  (A0), D1                ; compare types
+        EOR.B   D0, D1
+        ANDI.B  #type_mask, D1          ; ignoring irrelevant bits
+        BNE.S   $01                     ; if different, then not EQ
+        IF_is_composite (A0), $01       ; finally, if not both atoms, not eq
+    $00 LEA     T_cell, A0              ; A0 := T
+        BRA.S   $02
+    $01 LEA     F_cell, A0              ; A0 := F
+;   $02 cons    A0, tail(S_reg)         ; new_cell := (TorF.S)
+    $02 cons    A0, tail(A1)
+;       MOVEA.L new_cell, S_reg         ; S := (... .S)
+        MOVEA.L A6, A1                         
+        END
+
+ADD_M   ; instruction #15
+        ;
+        ;       (a b.S) E (ADD.C) D  ->  ((a+b).S) E C D
+
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+;       MOVEA.L (S_reg), A0             ; A0 := a
+        MOVEA.L (A1), A0
+        MOVE.L  val(A0), D1             ; D1 := value of a, as a number
+;       tail_pop S_reg                  ; S := tail(S)
+        tail_pop A1
+;       MOVEA.L (S_reg), A0             ; A0 := b
+        MOVEA.L (A1), A0
+        ADD.L   val(A0), D1             ; D1 := b + a, as a number
+        numb    D1                      ; new_cell := (a+b)
+;       MOVE.L  new_cell, W_reg
+        MOVE.L  A6, W_reg
+;       cons    W_reg, tail(S_reg)      ; new_cell := ((a+b).S)
+        cons    W_reg, tail(A1)
+;       MOVEA.L new_cell, S_reg         ; S := ((a+b).S)
+        MOVEA.L A6, A1
+        END
+
+SUB_M   ; instruction #16
+        ;
+        ;       (a b.S) E (SUB.C) D  ->  ((b-a).S) E C D
+
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+;       MOVEA.L (S_reg), A0             ; A0 := a
+        MOVEA.L (A1), A0
+        MOVE.L  val(A0), D0             ; D0 := value of a, as a number
+;       tail_pop S_reg                  ; S := tail(S)
+        tail_pop A1
+;       MOVEA.L (S_reg), A0             ; A0 := b
+        MOVEA.L (A1), A0
+        MOVE.L  val(A0), D1             ; D1 := b as a number
+        SUB.L   D0, D1                  ; D1 := b - a, as a number
+        numb    D1                      ; new_cell := (b-a)
+;       MOVE.L  new_cell, W_reg
+        MOVE.L  A6, W_reg
+;       cons    W_reg, tail(S_reg)      ; new_cell := ((b-a).S)
+        cons    W_reg, tail(A1)
+;       MOVEA.L new_cell, S_reg         ; S := ((b-a).S)
+        MOVEA.L A6, A1
+        END
+
+MUL_M   ; instruction #17
+        ;
+        ;       (a b.S) E (MUL.C) D  ->  ((a*b).S) E C D
+
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+;       MOVEA.L (S_reg), A0             ; A0 := a
+        MOVEA.L (A1), A0
+        MOVE.L  val(A0), D0             ; D0 := value of a
+;       tail_pop S_reg                  ; S := tail(S)      
+        tail_pop A1
+;       MOVEA.L (S_reg), A0             ; A0 := b
+        MOVEA.L (A1), A0
+        MOVE.L  val(A0), D1             ; D1 := value of b
+        SAVE    D2-D4
+        MULTIPLY D0, D1, D2, D3, D4     ; D0 := value of a*b
+        RESTORE D2-D4
+        numb    D0                      ; new_cell := (a*b)
+;       MOVE.L  new_cell, W_reg
+        MOVE.L  A6, W_reg
+;       cons    W_reg, tail(S_reg)      ; new_cell := ((a*b).S)
+        cons    W_reg, tail(A1)
+;       MOVEA.L new_cell, S_reg         ; S := ((a*b).S)
+        MOVEA.L A6, A1
+        END
+
+DIV_M   ; instruction #18
+        ;
+        ;       (a b.S) E (DIV.C) D  ->  ((b/a).S) E C D
+
+;       MOVEA.L (S_reg), A0             ; A0 := a
+        MOVEA.L (A1), A0
+        MOVE.L  val(A0), D1             ; D1 := value of a
+;       tail_pop S_reg                  ; S := tail(S)
+        tail_pop A1
+;       MOVEA.L (S_reg), A0             ; A0 := b
+        MOVEA.L (A1), A0
+        MOVE.L  val(A0), D0             ; D0 := value of b
+        SAVE    D2-D4
+        DIVIDE  D0, D1, D2, D3, D4      ; D2 := value of b/a
+        MOVE.L  D2, D0
+        RESTORE D2-D4
+        numb    D0                      ; new_cell := b/a
+;       MOVE.L  new_cell, W_reg
+        MOVE.L  A6, W_reg
+;       cons    W_reg, tail(S_reg)      ; new_cell := ((b/a).S)
+        cons    W_reg, tail(A1)
+;       MOVEA.L new_cell, S_reg         ; S := ((b/a).S)
+        MOVEA.L A6, A1
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+        END
+
+REM_M   ; instruction #19
+        ;
+        ;       (a b.S) E (REM.C) D  ->  ((b|a).S) E C D
+
+;       MOVEA.L (S_reg), A0             ; A0 := a
+        MOVEA.L (A1), A0
+        MOVE.L  val(A0), D1             ; D1 := value of a
+;       tail_pop S_reg                  ; S := tail(S)
+        tail_pop A1
+;       MOVEA.L (S_reg), A0             ; A0 := b
+        MOVEA.L (A1), A0
+        MOVE.L  val(A0), D0             ; D0 := value of b
+        SAVE    D2-D4
+        DIVIDE  D0, D1, D2, D3, D4      ; D0 := value of b rem a
+        RESTORE D2-D4
+        numb    D0
+;       MOVE.L  new_cell, W_reg
+        MOVE.L  A6, W_reg
+;       cons    W_reg, tail(S_reg)      ; new_cell := ((b|a).S)
+        cons    W_reg, tail(A1)
+;       MOVEA.L new_cell, S_reg         ; S := ((b|a).S)
+        MOVEA.L A6, A1
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+        END
+
+LEQ_M   ; instruction #20
+        ;
+        ;       (a b.S) E (ADD.C) D  ->  ((a>=b).S) E C D
+
+;       MOVEA.L (S_reg), A0             ; A0 := a
+        MOVEA.L (A1), A0
+        MOVE.L  val(A0), D0             ; D0 := value of a
+;       tail_pop S_reg                  ; S := tail(S)
+        tail_pop A1
+;       MOVEA.L (S_reg), A0             ; A0 := b
+        MOVEA.L (A1), A0
+        CMP.L   val(A0), D0             ; compare a to b (ie. b - a)
+        BGE.S   $00                     ; if a <= b
+        LEA     F_cell, A0              ; else A0 := F
+        BRA.S   $01
+    $00 LEA     T_cell, A0              ; A0 := T
+;   $01 cons    A0, tail(S_reg)         ; new_cell := (... .S)
+    $01 cons    A0, tail(A1)
+;       MOVEA.L new_cell, S_reg         ; S := (... .S)
+        MOVEA.L A6, A1
+;       tail_pop C_reg                  ; C := tail(C)
+        tail_pop A4
+        END
+
+STOP_M  ; instruction #21
+        ;
+        ;       (a.S) E (STOP.C) D  ->  (a.S) E (STOP.C) D if a is an atom
+        ;       (((c.r).a).S) E (STOP.C) D  ->  NIL (a.r) c (S E (STOP.C).D)
+
+;       MOVEA.L (S_reg), A0             ; A0 := tos
+        MOVEA.L (A1), A0
+        IFL_is_atom  (A0), $99          ; if atom, then halt
+;       cons_push C_reg, D_reg          ; D := ((STOP.C).D)
+        cons_push A4, A5
+;       cons_push E_reg, D_reg          ; D := (E (STOP.C).D)
+        cons_push A2, A5
+;       cons_push tail(S_reg), D_reg    ; D := (S E (STOP.C).D)
+        cons_push tail(A1), A5
+;       head_pop S_reg                  ; S := ((c.r).a)
+        head_pop A1
+;       MOVEA.L (S_reg), C_reg          ; C := (c.r)
+        MOVEA.L (A1), A4
+;       cons    tail(S_reg), tail(C_reg) ; new_cell:= (a.r)
+        cons    tail(A1), tail(A4)
+;       MOVEA.L new_cell, E_reg         ; E := (a.r)
+        MOVEA.L A6, A2
+;       head_pop C_reg                  ; C := c
+        head_pop A4
+;       MOVEA.L NIL, S_reg              ; S := NIL
+        MOVEA.L NIL, A1
+        END
+    $99 EXIT    #rc_ok
+
+LDE_M   ; instruction #22
+        ;
+        ;       S E (LDE x.C) D  -> ((recipe x.E).S) E C D
+
+;       tail_pop C_reg                  ; C := (x.C)
+        tail_pop A4
+;       recipe  (C_reg), E_reg          ; new_cell := (recipe x.E)
+        recipe  (A4), A2
+;       tail_pop C_reg
+        tail_pop A4
+;       MOVE.L  new_cell, W_reg         ; W := (recipe x.E)
+        MOVE.L  A6, W_reg
+;       cons_push W_reg, S_reg          ; S := ((recipe x.E).S)
+        cons_push W_reg, A1
+        END
+
+UPD_M   ; instruction #23
+        ;
+        ;       (x.s) e c ((a.S) E C.D)  ->  (a.S) E C D
+        ;                       but also, a := x
+
+;       MOVEA.L (S_reg), A0             ; A0 := x
+        MOVEA.L (A1), A0
+;       MOVEA.L (D_reg), S_reg          ; S := (a.S)
+        MOVEA.L (A5), A1
+;       MOVEA.L (S_reg), C_reg          ; C := a
+        MOVEA.L (A1), A4
+;       update  C_reg, A0               ; copy x onto a
+        update  A4, A0                  ; may corrupt D0, D1, D2
+;       tail_pop D_reg                  ; D := (E C.D)
+        tail_pop A5
+;       MOVEA.L (D_reg), E_reg
+        MOVEA.L (A5), A2
+;       tail_pop D_reg                  ; D := (C.D)
+        tail_pop A5
+;       MOVEA.L (D_reg), C_reg
+        MOVEA.L (A5), A4
+;       tail_pop D_reg
+        tail_pop A5
+        END
+
+AP0_M   ; instruction #24
+        ;
+        ;       ((rec c.e).S) E (AP0.C) D  ->  NIL e c (((rec c.e).S) E C.D)
+        ;       (a.S) E (AP0.C) D  ->  (a.S) E C D if a is not a recipe
+
+;       tail_pop C_reg
+        tail_pop A4
+;       MOVEA.L (S_reg), A0             ; A0 := (recipe c.e)
+        MOVEA.L (A1), A0
+        MOVE.B  (A0), D0                ; D0 := type-byte of (recipe c.e)
+        AND.B   #type_mask, D0          ; D0 := type of (recipe c.e)
+        CMP.B   #recipe_type, D0
+        BNE.S   $99
+;       cons_push C_reg, D_reg          ; D := (C.D)
+        cons_push A4, A5
+;       cons_push E_reg, D_reg          ; D := (E C.D)
+        cons_push A2, A5
+;       cons_push S_reg, D_reg          ; D := (((recipe c.e).S) E C.D)
+        cons_push A1, A5
+;       head_pop S_reg                  ; S := (recipe c.e)
+        head_pop A1
+;       MOVEA.L (S_reg), C_reg          ; C := c
+        MOVEA.L (A1), A4
+;       MOVEA.L tail(S_reg), E_reg      ; E := e
+        MOVEA.L tail(A1), A2
+;       MOVEA.L NIL, S_reg              ; S := NIL
+        MOVEA.L NIL, A1
+    $99 END
+
+READ_M  ; instruction #25
+        ;
+        ;       S E (READ.C) D  ->  (x.S) E C D
+        ;
+        ; where x is a new s-expression read from the input
+
+;       tail_pop C_reg
+        tail_pop A4
+        BSR     get_exp
+        END
+
+PRINT_M ; instruction #26
+        ;
+        ;       (x.S) E (PRINT.C) D  ->  S E C D
+        ;
+        ; with the side effect of printing x to the output
+
+;       tail_pop C_reg
+        tail_pop A4
+;       MOVEA.L (S_reg), A0             ; A0 := x
+        MOVEA.L (A1), A0
+        BSR     put_exp                 ; print x
+;       tail_pop S_reg
+        tail_pop A1
+        END
+
+IMPLODE_M
+        ; instruction #27
+        ;
+        ;       (x.S) E (IMPLODE.C) D  ->  (y.S) E C D
+        ;
+        ; where, if x is a list of character codes, then y is the symbol
+        ;               with tht representation
+        ;        if x is the number 32 (space in ASCII), then y is the
+        ;               null symbol
+        ;        if x is any other number, then y is the symbol whose
+        ;               representation consists of the single character
+        ;               with that character code
+
+;       tail_pop C_reg
+        tail_pop A4
+;       MOVEA.L (S_reg), A0             ; A0 := x
+        MOVEA.L (A1), A0
+
+;       cons    A0, tail(S_reg)         ; copy the top of stack link
+        cons    A0, tail(A1)
+;       MOVEA.L new_cell, S_reg
+        MOVEA.L A6, A1
+
+        IF_not_number (A0), $20         ; transform special cases first
+        MOVE.L  NIL, D0
+        CMPI.L  #" ", val(A0)
+        BEQ.S   $10                     ; chr(32) --> implode(NIL)
+        cons    A0, NIL                 ; chr(x) --> implode((x.NIL))
+;       MOVE.L  new_cell, D0
+        MOVE.L  A6, D0
+;   $10 update_head S_reg, D0
+    $10 update_head A1, D0
+    $20
+
+;       MOVE.L  (S_reg), W_reg          ; argument for store_token
+        MOVE.L  (A1), W_reg
+        BSR     store_token             ; internalise W_reg
+        MOVE.L  W_reg, D0
+;       update_head S_reg, D0
+        update_head A1, D0
+        END
+
+EXPLODE_M
+        ; instruction #28
+        ;
+        ;       (x.S) E (EXPLODE.C) D  ->  (y.S) E C D
+        ;
+        ; where y is the list of character codes for the characters which
+        ; form the representation of the symbol x
+
+;       tail_pop C_reg
+        tail_pop A4
+;       MOVEA.L (S_reg), A0
+        MOVEA.L (A1), A0
+;       cons    val(A0), tail(S_reg)
+        cons    val(A0), tail(A1)
+;       MOVEA.L new_cell, S_reg
+        MOVEA.L A6, A1
+        END
+
+;       end of file SECD.MICRO.TEXT
